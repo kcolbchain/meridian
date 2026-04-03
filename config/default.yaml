@@ -1,0 +1,17 @@
+agent:
+  initial_base: 0
+  initial_quote: 10000
+  base_spread_bps: 200
+  max_order_size_pct: 0.1
+  max_exposure: 50
+  max_inventory_pct: 0.3
+  max_base_position: 100
+  geography: "default"
+  liquid_volume_threshold: 1000000
+
+backtest:
+  fill_probability: 0.3
+  fee_bps: 10
+  ticks: 500
+  base_price: 100.0
+  volatility: 0.02
