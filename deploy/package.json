@@ -1,0 +1,19 @@
+{
+  "name": "@kcolbchain/meridian-contracts",
+  "version": "0.1.0",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "deploy:local": "hardhat run deploy.js --network localhost",
+    "deploy:base-sepolia": "hardhat run deploy.js --network base-sepolia",
+    "deploy:op-sepolia": "hardhat run deploy.js --network op-sepolia",
+    "deploy:fuji": "hardhat run deploy.js --network fuji"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "^5.0.0"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^4.0.0",
+    "hardhat": "^2.19.0"
+  }
+}
