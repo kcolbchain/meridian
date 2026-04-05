@@ -1,35 +1,39 @@
 # Contributing to meridian
 
-Thanks for your interest in contributing! kcolbchain is an open blockchain research collective (est. 2015) and we welcome contributions from developers at all levels.
+Thanks for your interest! meridian is a [kcolbchain](https://kcolbchain.com) open-source project.
 
 ## Quick Start
 
-1. Browse [open issues](https://github.com/kcolbchain/meridian/issues) tagged `good-first-issue` or `help-wanted`
-2. Comment on an issue to claim it
-3. Fork the repo, create a feature branch
-4. Submit a PR referencing the issue number
-5. Get reviewed within 48 hours
+```bash
+git clone https://github.com/YOUR_USERNAME/meridian.git
+cd meridian
+pip install -r requirements.txt
+python -m pytest tests/
+python -m src.agents.rwa_market_maker --simulate
+```
 
-## Contributor Tiers
+### Contracts
+```bash
+cd deploy
+npm install
+npx hardhat compile
+npx hardhat test
+```
 
-| PRs Merged | Tier | Access |
-|------------|------|--------|
-| 0 | Explorer | Public issues |
-| 1+ | Contributor | Paid bounties, private channel |
-| 3+ | Core | Client project briefs, contract offers |
+## Finding Work
 
-Ship quality PRs and unlock paid opportunities at funded blockchain companies.
+- [Open issues](https://github.com/kcolbchain/meridian/issues)
+- `good-first-issue` / `help-wanted` tags
 
-## Bounties
+## Code Style
 
-Issues tagged `bounty` have paid rewards. Claim by commenting, deliver within timeline, get paid on merge.
+- Python: black formatter, type hints preferred
+- Solidity: follow existing patterns, OpenZeppelin v5
+- Tests required for new features
 
-## Links
+## Community
 
-- Docs: https://docs.kcolbchain.com/meridian/
-- All projects: https://docs.kcolbchain.com/
-- Email: research@kcolbchain.com
+[kcolbchain.com](https://kcolbchain.com) | [Join](https://kcolbchain.com/join.html)
 
----
-
-*kcolbchain — open-source blockchain tools and research since 2015. Founded by [Abhishek Krishna](https://abhishekkrishna.com).*
+## License
+MIT
