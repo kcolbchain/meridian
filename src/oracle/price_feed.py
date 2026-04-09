@@ -6,6 +6,14 @@ from datetime import datetime
 from typing import Optional
 import random
 
+from src.connectors.chainlink import (
+    ChainlinkOracle,
+    OracleConnectionError,
+    OracleFeedNotFound,
+    OracleStalePriceError,
+    OracleError,
+)
+
 
 @dataclass
 class PricePoint:
@@ -59,15 +67,58 @@ class MockPriceFeed(BasePriceFeed):
 
 
 class ChainlinkPriceFeed(BasePriceFeed):
-    """Chainlink oracle integration (placeholder — requires web3 connection)."""
+    """Chainlink oracle integration using Chainlink Data Feeds."""
 
-    def __init__(self, web3_provider: str, feed_addresses: dict[str, str]):
-        self.provider = web3_provider
-        self.feeds = feed_addresses
+    def __init__(
+        self,
+        provider_url: str,
+        feed_addresses: dict[str, str],
+        heartbeat_threshold_seconds: int = 3600,
+    ):
+        if not provider_url:
+            raise ValueError("provider_url cannot be empty")
+        if not feed_addresses:
+            raise ValueError("feed_addresses cannot be empty")
+        self._chainlink_oracle = ChainlinkOracle(
+            provider_url=provider_url,
+            feed_addresses=feed_addresses,
+            heartbeat_threshold_seconds=heartbeat_threshold_seconds,
+        )
 
     def get_price(self, asset: str) -> Optional[PricePoint]:
-        # TODO: implement actual Chainlink read
-        raise NotImplementedError("Connect web3 provider and implement latestRoundData() call")
+        try:
+            price = self._chainlink_oracle.get_price(asset)
+            # ChainlinkOracle's get_price currently only returns the float price.
+            # We use datetime.utcnow() for the timestamp for now.
+            # For a more robust solution, ChainlinkOracle.get_price could return
+            # a tuple (price, updatedAt_timestamp) to provide the on-chain timestamp.
+            return PricePoint(
+                asset=asset,
+                price=price,
+                currency="USD",  # Chainlink feeds typically report in USD
+                source="chainlink",
+                timestamp=datetime.utcnow(),
+                confidence=0.99,  # High confidence for Chainlink feeds
+            )
+        except OracleFeedNotFound:
+            return None
+        except OracleConnectionError as e:
+            # Log connection issues, but return None as no price can be fetched
+            # A more robust system would use a proper logging framework.
+            print(f"Warning: Chainlink connection error for asset '{asset}': {e}")
+            return None
+        except OracleStalePriceError as e:
+            # Stale price means the "real-time" requirement is not met, so raise an error.
+            raise ValueError(f"Chainlink price for asset '{asset}' is stale: {e}") from e
+        except OracleError as e:
+            # Catch other general Chainlink oracle errors
+            raise RuntimeError(f"Chainlink oracle error for asset '{asset}': {e}") from e
+        except Exception as e:
+            # Catch any unexpected errors
+            raise RuntimeError(f"Unexpected error fetching Chainlink price for asset '{asset}': {e}") from e
 
     def get_historical(self, asset: str, periods: int) -> list[PricePoint]:
-        raise NotImplementedError("Implement getRoundData() loop for historical prices")
+        # Implementing historical prices would require iterating through Chainlink rounds
+        # using contract.functions.getRoundData(roundId).call() which is not
+        # directly supported by the current ChainlinkOracle connector's API.
+        raise NotImplementedError("Historical Chainlink prices are not yet implemented.")
