@@ -1,0 +1,489 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>meridian — RWA market-making agent</title>
+<meta name="description" content="Autonomous market-making agents for RWA and long-tail assets. Live strategy simulator + inventory dashboard. By kcolbchain." />
+<style>
+  :root {
+    --bg: #0b0d10;
+    --panel: #13161b;
+    --panel-2: #0f1216;
+    --border: #23272f;
+    --fg: #e7e9ee;
+    --muted: #8a93a3;
+    --accent: #34d399;
+    --bid: #34d399;
+    --ask: #f87171;
+    --warn: #fbbf24;
+    --info: #7dd3fc;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  header { padding: 22px 32px; border-bottom: 1px solid var(--border); display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:12px; }
+  header h1 { margin:0; font-size: 20px; }
+  header h1 .dot { color: var(--accent); }
+  header p { margin:0; color: var(--muted); font-size: 13px; }
+  .layout { display:grid; grid-template-columns: 300px 1fr; min-height: calc(100vh - 70px); }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } aside { border-right: 0; border-bottom: 1px solid var(--border); max-height: 60vh; overflow-y: auto; } }
+  aside { border-right: 1px solid var(--border); background: var(--panel-2); padding: 20px; overflow-y: auto; }
+  aside h2 { margin: 0 0 10px 0; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+  .group { padding: 12px 0; border-top: 1px solid var(--border); }
+  .group:first-of-type { border-top: 0; padding-top: 0; }
+  .field { display:flex; justify-content:space-between; align-items:center; padding: 6px 0; gap: 10px; }
+  .field label { color: var(--muted); font-size: 12px; flex: 1; }
+  .field input[type=range] { flex: 1; }
+  .field .val { font-family: var(--mono); font-size: 12px; width: 80px; text-align: right; color: var(--fg); }
+  .field select { background: var(--panel); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font: inherit; width: 100%; }
+  main { padding: 24px 32px 80px 32px; overflow-x: auto; }
+  .kpis { display:grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 22px; }
+  .kpi { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .kpi .l { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .kpi .v { font-family: var(--mono); font-size: 20px; margin-top: 4px; }
+  .kpi .v.up   { color: var(--bid); }
+  .kpi .v.down { color: var(--ask); }
+  .kpi .v.warn { color: var(--warn); }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; margin-bottom: 16px; }
+  .panel h3 { margin: 0 0 10px 0; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  svg.plot { display:block; width: 100%; height: 220px; }
+  svg.plot .axis { stroke: var(--border); }
+  svg.plot .grid { stroke: var(--border); stroke-dasharray: 2 3; opacity: 0.4; }
+  svg.plot text { fill: var(--muted); font-size: 10px; font-family: var(--mono); }
+  svg.plot .mid { stroke: var(--info); fill: none; stroke-width: 1.5; }
+  svg.plot .bid { stroke: var(--bid); fill: none; stroke-width: 1.2; stroke-dasharray: 3 3; }
+  svg.plot .ask { stroke: var(--ask); fill: none; stroke-width: 1.2; stroke-dasharray: 3 3; }
+  .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 1100px) { .charts { grid-template-columns: 1fr; } }
+  .ladder { font-family: var(--mono); font-size: 12px; }
+  .ladder .row { display: grid; grid-template-columns: 80px 100px 80px; padding: 3px 0; }
+  .ladder .row.ask  { color: var(--ask); }
+  .ladder .row.bid  { color: var(--bid); }
+  .ladder .row.mid  { color: var(--info); padding: 6px 0; border-block: 1px solid var(--border); margin: 4px 0; font-weight: 600; }
+  .ladder .col-q { text-align: right; opacity: 0.7; }
+  table.trades { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; }
+  table.trades th, table.trades td { padding: 4px 8px; text-align: left; border-bottom: 1px solid var(--border); }
+  table.trades th { color: var(--muted); font-weight: 500; text-transform: uppercase; font-size: 10px; letter-spacing: 0.06em; }
+  table.trades td.buy  { color: var(--bid); }
+  table.trades td.sell { color: var(--ask); }
+  .strategies { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+  .strat { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .strat h4 { margin: 0; font-size: 14px; }
+  .strat .meta { color: var(--muted); font-size: 12px; margin: 4px 0 8px 0; }
+  .strat .props { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; font-family: var(--mono); font-size: 11.5px; }
+  .strat .props .k { color: var(--muted); }
+  .strat .badge { font-family: var(--mono); font-size: 10px; padding: 2px 7px; border-radius: 99px; background: #1f232b; color: var(--muted); margin-right: 4px; }
+  .strat .badge.live { background: #0e2a1e; color: var(--bid); }
+  details.spec { margin-top: 18px; }
+  details.spec summary { cursor: pointer; color: var(--muted); font-size: 12px; padding: 6px 0; }
+  details.spec summary:hover { color: var(--fg); }
+  details.spec[open] summary { color: var(--fg); }
+  footer { padding: 20px 32px; color: var(--muted); font-size: 12px; border-top: 1px solid var(--border); }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>meridian<span class="dot">.</span> <span style="color:var(--muted);font-weight:400">RWA market-making agent</span></h1>
+    <p>Autonomous quoting for illiquid + long-tail assets. Adaptive spreads, inventory-aware, oracle-driven, geography-aware.</p>
+  </div>
+  <div style="display:flex;gap:14px;align-items:center">
+    <a href="https://github.com/kcolbchain/meridian">source</a>
+    <a href="https://docs.kcolbchain.com/meridian/">docs</a>
+  </div>
+</header>
+
+<div class="layout">
+  <aside>
+    <div class="group">
+      <h2>Strategy</h2>
+      <div class="field"><select id="strategy">
+        <option value="constant_spread">constant_spread (baseline)</option>
+        <option value="adaptive_spread" selected>adaptive_spread</option>
+      </select></div>
+    </div>
+    <div class="group">
+      <h2>Asset</h2>
+      <div class="field"><select id="asset">
+        <option value="rwa-credit">Tokenised private credit (USD)</option>
+        <option value="rwa-treasury">On-chain T-bill (USD)</option>
+        <option value="rwa-real-estate">Fractional real-estate (EU)</option>
+        <option value="long-tail">Long-tail ERC-20</option>
+      </select></div>
+    </div>
+    <div class="group">
+      <h2>Quoting</h2>
+      <div class="field"><label>Base spread (bps) <span class="val" id="v_spread"></span></label><input type="range" min="10" max="500" step="5" id="i_spread" value="200"></div>
+      <div class="field"><label>Order size (% inv) <span class="val" id="v_size"></span></label><input type="range" min="1" max="20" step="1" id="i_size" value="10"></div>
+      <div class="field"><label>Max inventory skew <span class="val" id="v_skew"></span></label><input type="range" min="5" max="80" step="1" id="i_skew" value="30"></div>
+      <div class="field"><label>Inventory penalty (bps/unit) <span class="val" id="v_penalty"></span></label><input type="range" min="0" max="50" step="1" id="i_penalty" value="8"></div>
+    </div>
+    <div class="group">
+      <h2>Market regime</h2>
+      <div class="field"><label>Volatility (bps/tick) <span class="val" id="v_vol"></span></label><input type="range" min="2" max="200" step="2" id="i_vol" value="40"></div>
+      <div class="field"><label>Fill probability <span class="val" id="v_fill"></span></label><input type="range" min="0.05" max="0.9" step="0.05" id="i_fill" value="0.3"></div>
+      <div class="field"><label>Toxic flow share <span class="val" id="v_tox"></span></label><input type="range" min="0" max="0.6" step="0.05" id="i_tox" value="0.10"></div>
+      <div class="field"><label>Tick speed <span class="val" id="v_speed"></span></label><input type="range" min="50" max="800" step="50" id="i_speed" value="250"></div>
+    </div>
+    <div class="group">
+      <h2>Run</h2>
+      <div class="field"><button id="play" style="flex:1;background:var(--panel);color:var(--fg);border:1px solid var(--border);padding:8px;border-radius:6px;cursor:pointer;font:inherit">▶ Run</button><button id="reset" style="background:var(--panel);color:var(--fg);border:1px solid var(--border);padding:8px 12px;border-radius:6px;cursor:pointer;font:inherit">↺</button></div>
+    </div>
+  </aside>
+
+  <main>
+    <div class="kpis">
+      <div class="kpi"><div class="l">Mid (USD)</div><div class="v" id="k_mid">—</div></div>
+      <div class="kpi"><div class="l">Effective spread (bps)</div><div class="v" id="k_spread">—</div></div>
+      <div class="kpi"><div class="l">Inventory</div><div class="v" id="k_inv">—</div></div>
+      <div class="kpi"><div class="l">Realised PnL</div><div class="v" id="k_pnl">—</div></div>
+      <div class="kpi"><div class="l">Inventory PnL</div><div class="v" id="k_invPnl">—</div></div>
+      <div class="kpi"><div class="l">Fill rate</div><div class="v" id="k_fill">—</div></div>
+      <div class="kpi"><div class="l">Adverse selection</div><div class="v" id="k_adv">—</div></div>
+      <div class="kpi"><div class="l">Sharpe-ish</div><div class="v" id="k_sharpe">—</div></div>
+    </div>
+
+    <div class="charts">
+      <div class="panel"><h3>Mid + quotes</h3><svg id="p_mid" class="plot"></svg></div>
+      <div class="panel"><h3>PnL trajectory</h3><svg id="p_pnl" class="plot"></svg></div>
+    </div>
+
+    <div class="charts">
+      <div class="panel"><h3>Order ladder (live)</h3><div id="ladder" class="ladder"></div></div>
+      <div class="panel">
+        <h3>Recent fills</h3>
+        <table class="trades"><thead><tr><th>tick</th><th>side</th><th>px</th><th>qty</th><th>edge (bps)</th></tr></thead><tbody id="trades"></tbody></table>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3>Strategies in this repo</h3>
+      <div class="strategies">
+        <div class="strat">
+          <h4>constant_spread <span class="badge live">live</span></h4>
+          <div class="meta">Baseline. Symmetric quotes around the oracle mid at a fixed bid/ask offset.</div>
+          <div class="props">
+            <span class="k">file</span><span>src/strategies/constant_spread.py</span>
+            <span class="k">handles</span><span>vol regimes? no</span>
+            <span class="k">handles</span><span>inventory skew? no</span>
+            <span class="k">good for</span><span>liquid pairs, calm regimes</span>
+          </div>
+        </div>
+        <div class="strat">
+          <h4>adaptive_spread <span class="badge live">live</span></h4>
+          <div class="meta">Widens with realised vol; skews bid/ask to unwind inventory. Avellaneda-Stoikov inspired.</div>
+          <div class="props">
+            <span class="k">file</span><span>src/strategies/adaptive_spread.py</span>
+            <span class="k">handles</span><span>vol regimes? yes</span>
+            <span class="k">handles</span><span>inventory skew? yes</span>
+            <span class="k">good for</span><span>RWA, long-tail, thin books</span>
+          </div>
+        </div>
+        <div class="strat">
+          <h4>compliance_gated <span class="badge">roadmap</span></h4>
+          <div class="meta">Per-counterparty quoting based on jurisdiction + ONCHAINID claim. Required for ERC-3643 RWA.</div>
+          <div class="props">
+            <span class="k">tracked</span><span>see issue #11 (RWA tokenomics)</span>
+            <span class="k">depends on</span><span>kcolbchain/rwa-toolkit</span>
+          </div>
+        </div>
+        <div class="strat">
+          <h4>geo_priced <span class="badge">roadmap</span></h4>
+          <div class="meta">Different mid per jurisdiction (US vs EU vs APAC) — same asset, different regulated price.</div>
+          <div class="props">
+            <span class="k">tracked</span><span>see issue #5 (jurisdiction transfer module)</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <details class="spec">
+      <summary>Simulation model (open)</summary>
+      <div class="panel" style="margin-top: 8px">
+        <p style="margin:0 0 10px 0;color:var(--muted);font-size:12.5px">A simplified single-asset book runs in the browser. Each tick the mid takes a Brownian step (vol slider). The agent posts a bid + ask using the selected strategy. Each side has a per-tick fill probability; the toxic-flow share assumes the post-trade mid moves <em>against</em> the maker that fraction of the time, modelling adverse selection. Inventory PnL marks the current position to mid.</p>
+        <p style="margin:0;color:var(--muted);font-size:12.5px">This is a teaching toy — the production agent in this repo runs a richer book replay against historical RWA prints. See <code>src/backtest/engine.py</code>.</p>
+      </div>
+    </details>
+  </main>
+</div>
+
+<footer>
+  meridian is a kcolbchain open-source agent. Production deployments quote against real venues via
+  <a href="https://github.com/kcolbchain/switchboard">switchboard</a> wallets, and consume settlement primitives from
+  <a href="https://github.com/kcolbchain/stablecoin-toolkit">stablecoin-toolkit</a> and
+  <a href="https://github.com/kcolbchain/rwa-toolkit">rwa-toolkit</a>. Tokenomics design (tokenised MM shares, fee
+  capture) is tracked in <a href="https://github.com/kcolbchain/meridian/issues">repo issues</a>.
+</footer>
+
+<script>
+// ================================================================= state
+const S = {
+  ticks: [],
+  mid: [], bid: [], ask: [],
+  pnl: [], invPnl: [],
+  trades: [],
+  inventory: 0,
+  cash: 10000,
+  fills: 0, attempts: 0, adverseHits: 0,
+  midPrice: 100,
+  running: false,
+  timer: null,
+};
+
+// ================================================================= ui binders
+const I = id => document.getElementById(id);
+const set = (id, v, cls) => { const el = I(id); el.textContent = v; if (cls !== undefined) el.className = "v " + cls; };
+const sliders = ["spread","size","skew","penalty","vol","fill","tox","speed"];
+function syncLabel(k) {
+  const v = parseFloat(I("i_"+k).value);
+  let txt;
+  switch (k) {
+    case "spread":  txt = v + " bps"; break;
+    case "size":    txt = v + " %"; break;
+    case "skew":    txt = v + " %"; break;
+    case "penalty": txt = v + " bps"; break;
+    case "vol":     txt = v + " bps"; break;
+    case "fill":    txt = (v*100).toFixed(0)+"%"; break;
+    case "tox":     txt = (v*100).toFixed(0)+"%"; break;
+    case "speed":   txt = v + " ms"; break;
+  }
+  I("v_"+k).textContent = txt;
+}
+sliders.forEach(k => { I("i_"+k).addEventListener("input", () => { syncLabel(k); }); syncLabel(k); });
+
+// asset switches mid base / vol
+const ASSETS = {
+  "rwa-credit":      { base: 100,    label: "Private credit (USD)", baseVol: 20 },
+  "rwa-treasury":    { base: 99.5,   label: "On-chain T-bill (USD)", baseVol: 5 },
+  "rwa-real-estate": { base: 250,    label: "Real estate (EU)", baseVol: 60 },
+  "long-tail":       { base: 0.142,  label: "Long-tail ERC-20", baseVol: 200 },
+};
+function applyAsset() {
+  const a = ASSETS[I("asset").value];
+  S.midPrice = a.base;
+  I("i_vol").value = Math.max(2, Math.min(200, a.baseVol));
+  syncLabel("vol");
+}
+I("asset").addEventListener("change", () => { reset(); applyAsset(); });
+applyAsset();
+
+// ================================================================= sim
+function quote() {
+  const baseSpread = parseFloat(I("i_spread").value);   // bps
+  const skew = parseFloat(I("i_skew").value);            // % max inv
+  const penalty = parseFloat(I("i_penalty").value);      // bps per unit
+  const strat = I("strategy").value;
+
+  let bidBps, askBps;
+  if (strat === "constant_spread") {
+    bidBps = baseSpread / 2;
+    askBps = baseSpread / 2;
+  } else {
+    // adaptive: widen with realised vol, skew with inventory
+    const recent = S.mid.slice(-10);
+    let realisedBps = 0;
+    if (recent.length > 1) {
+      let s = 0; for (let i=1; i<recent.length; i++) s += Math.abs(recent[i]-recent[i-1])/recent[i-1];
+      realisedBps = (s / (recent.length-1)) * 10000;
+    }
+    const widen = Math.min(2.5, 1 + realisedBps / 200);   // up to 2.5x
+    const half = (baseSpread * widen) / 2;
+    const invSkewBps = S.inventory * penalty;             // + → push ask up & bid up (sell, buy less)
+    bidBps = half - invSkewBps;
+    askBps = half + invSkewBps;
+    // floor
+    bidBps = Math.max(2, bidBps);
+    askBps = Math.max(2, askBps);
+  }
+  return { bidBps, askBps };
+}
+
+function tick() {
+  // 1. mid moves
+  const volBps = parseFloat(I("i_vol").value);
+  const z = (Math.random()*2 - 1);
+  S.midPrice = Math.max(0.0001, S.midPrice * (1 + (volBps/10000) * z));
+
+  // 2. compute quotes
+  const { bidBps, askBps } = quote();
+  const bidPx = S.midPrice * (1 - bidBps/10000);
+  const askPx = S.midPrice * (1 + askBps/10000);
+
+  // 3. attempt fills
+  const fillP = parseFloat(I("i_fill").value);
+  const tox   = parseFloat(I("i_tox").value);
+  const sizePct = parseFloat(I("i_size").value);
+  const sizeUnits = Math.max(0.01, (S.cash + S.inventory * S.midPrice) * (sizePct/100) / S.midPrice);
+  S.attempts++;
+
+  // bid fill (someone sells to us)
+  if (Math.random() < fillP) {
+    const adverse = Math.random() < tox;
+    S.inventory += sizeUnits;
+    S.cash -= sizeUnits * bidPx;
+    S.fills++;
+    if (adverse) {
+      S.adverseHits++;
+      // post-trade mid moves down → we hold a position now worth less
+      S.midPrice *= 0.998;
+    }
+    S.trades.push({ tick: S.ticks.length, side: "buy", px: bidPx, qty: sizeUnits, edgeBps: bidBps });
+  }
+  // ask fill (someone buys from us)
+  if (Math.random() < fillP) {
+    const adverse = Math.random() < tox;
+    S.inventory -= sizeUnits;
+    S.cash += sizeUnits * askPx;
+    S.fills++;
+    if (adverse) {
+      S.adverseHits++;
+      S.midPrice *= 1.002;
+    }
+    S.trades.push({ tick: S.ticks.length, side: "sell", px: askPx, qty: sizeUnits, edgeBps: askBps });
+  }
+
+  // 4. record series
+  S.ticks.push(S.ticks.length);
+  S.mid.push(S.midPrice);
+  S.bid.push(bidPx);
+  S.ask.push(askPx);
+  const realisedPnl = S.cash - 10000 + S.inventory * S.midPrice;
+  S.pnl.push(realisedPnl);
+  S.invPnl.push(S.inventory * S.midPrice);
+
+  // bound history
+  const HIST = 200;
+  if (S.ticks.length > HIST) {
+    S.ticks.shift(); S.mid.shift(); S.bid.shift(); S.ask.shift(); S.pnl.shift(); S.invPnl.shift();
+  }
+  if (S.trades.length > 20) S.trades.splice(0, S.trades.length - 20);
+
+  render();
+}
+
+function plotMulti(svgId, series, opts = {}) {
+  const svg = I(svgId);
+  const w = svg.clientWidth || 480;
+  const h = svg.clientHeight || 220;
+  svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+  const pad = { l: 44, r: 8, t: 6, b: 18 };
+  const allY = series.flatMap(s => s.ys);
+  if (!allY.length) { svg.innerHTML = ""; return; }
+  const min = Math.min(...allY), max = Math.max(...allY);
+  const span = (max - min) || 1;
+  const xs = series[0].ys.length;
+  const xScale = i => pad.l + (i / Math.max(1, xs - 1)) * (w - pad.l - pad.r);
+  const yScale = v => pad.t + (1 - (v - min) / span) * (h - pad.t - pad.b);
+
+  const gridlines = [0.25,0.5,0.75].map(p => {
+    const y = pad.t + p * (h - pad.t - pad.b);
+    return `<line class="grid" x1="${pad.l}" y1="${y}" x2="${w-pad.r}" y2="${y}" />`;
+  }).join("");
+  const paths = series.map(s => {
+    const d = s.ys.map((v,i) => `${i===0?"M":"L"} ${xScale(i).toFixed(1)} ${yScale(v).toFixed(1)}`).join(" ");
+    return `<path d="${d}" class="${s.className}" />`;
+  }).join("");
+  svg.innerHTML = `
+    ${gridlines}
+    ${paths}
+    <line class="axis" x1="${pad.l}" y1="${h-pad.b}" x2="${w-pad.r}" y2="${h-pad.b}" />
+    <line class="axis" x1="${pad.l}" y1="${pad.t}" x2="${pad.l}" y2="${h-pad.b}" />
+    <text x="${pad.l-4}" y="${yScale(max)+3}" text-anchor="end">${opts.fmt ? opts.fmt(max) : max.toFixed(2)}</text>
+    <text x="${pad.l-4}" y="${yScale(min)+3}" text-anchor="end">${opts.fmt ? opts.fmt(min) : min.toFixed(2)}</text>
+    <text x="${pad.l}" y="${h-4}">tick 0</text>
+    <text x="${w-pad.r}" y="${h-4}" text-anchor="end">tick ${xs-1}</text>
+  `;
+}
+
+function render() {
+  // KPIs
+  const lastMid = S.mid[S.mid.length-1] || 0;
+  const lastSpread = (S.ask.length && S.bid.length) ? ((S.ask[S.ask.length-1] - S.bid[S.bid.length-1]) / lastMid) * 10000 : 0;
+  const realised = S.cash - 10000;
+  const pnl = realised + S.inventory * lastMid;
+  set("k_mid", "$" + lastMid.toFixed(4));
+  set("k_spread", lastSpread.toFixed(1) + " bps");
+  set("k_inv", S.inventory.toFixed(3), Math.abs(S.inventory) > parseFloat(I("i_skew").value)/100 * 50 ? "warn" : "");
+  set("k_pnl", "$" + pnl.toFixed(2), pnl >= 0 ? "up" : "down");
+  set("k_invPnl", "$" + (S.inventory * lastMid).toFixed(2));
+  set("k_fill", S.attempts ? ((S.fills / (2*S.attempts)) * 100).toFixed(0) + "%" : "—");
+  set("k_adv", S.fills ? ((S.adverseHits / S.fills) * 100).toFixed(0) + "%" : "—", S.fills && (S.adverseHits/S.fills) > 0.2 ? "warn" : "");
+  // sharpe-ish: pnl mean/stdev over recent window
+  const tail = S.pnl.slice(-30);
+  if (tail.length > 5) {
+    const diffs = tail.slice(1).map((v,i) => v - tail[i]);
+    const mu = diffs.reduce((a,b) => a+b, 0) / diffs.length;
+    const sd = Math.sqrt(diffs.reduce((a,b) => a + (b-mu)**2, 0) / diffs.length) || 1;
+    set("k_sharpe", (mu/sd).toFixed(2));
+  } else { set("k_sharpe", "—"); }
+
+  // plots
+  plotMulti("p_mid", [
+    { ys: S.mid, className: "mid" },
+    { ys: S.bid, className: "bid" },
+    { ys: S.ask, className: "ask" },
+  ], { fmt: v => "$" + v.toFixed(4) });
+  plotMulti("p_pnl", [
+    { ys: S.pnl, className: "mid" },
+  ], { fmt: v => "$" + v.toFixed(2) });
+
+  // ladder
+  const half = parseFloat(I("i_spread").value) / 2;
+  const ladderRows = [];
+  for (let i = 5; i >= 1; i--) {
+    const px = lastMid * (1 + (half * i / 5)/10000);
+    ladderRows.push(`<div class="row ask"><span>${px.toFixed(4)}</span><span class="col-q">${(Math.random()*2+0.2).toFixed(2)}</span><span>L${i}</span></div>`);
+  }
+  ladderRows.push(`<div class="row mid"><span>${lastMid.toFixed(4)}</span><span class="col-q">mid</span><span></span></div>`);
+  for (let i = 1; i <= 5; i++) {
+    const px = lastMid * (1 - (half * i / 5)/10000);
+    ladderRows.push(`<div class="row bid"><span>${px.toFixed(4)}</span><span class="col-q">${(Math.random()*2+0.2).toFixed(2)}</span><span>L${i}</span></div>`);
+  }
+  I("ladder").innerHTML = ladderRows.join("");
+
+  // trades
+  I("trades").innerHTML = S.trades.slice().reverse().map(t => `
+    <tr>
+      <td>${t.tick}</td>
+      <td class="${t.side === 'buy' ? 'buy' : 'sell'}">${t.side}</td>
+      <td>$${t.px.toFixed(4)}</td>
+      <td>${t.qty.toFixed(3)}</td>
+      <td>${t.edgeBps.toFixed(1)}</td>
+    </tr>
+  `).join("");
+}
+
+function reset() {
+  S.ticks=[]; S.mid=[]; S.bid=[]; S.ask=[]; S.pnl=[]; S.invPnl=[]; S.trades=[];
+  S.inventory=0; S.cash=10000; S.fills=0; S.attempts=0; S.adverseHits=0;
+  applyAsset();
+  render();
+}
+
+function play() {
+  if (S.running) {
+    S.running = false; clearInterval(S.timer);
+    I("play").textContent = "▶ Run";
+  } else {
+    S.running = true;
+    I("play").textContent = "⏸ Pause";
+    const step = () => { tick(); };
+    const speed = () => parseInt(I("i_speed").value, 10);
+    const loop = () => { if (!S.running) return; step(); S.timer = setTimeout(loop, speed()); };
+    loop();
+  }
+}
+I("play").addEventListener("click", play);
+I("reset").addEventListener("click", () => { reset(); });
+
+// boot
+reset();
+// auto-start so first-time visitors see motion
+play();
+</script>
+</body>
+</html>
