@@ -57,9 +57,13 @@ def _make_oracle(provider="http://localhost:8545"):
 
 def test_unknown_pair_raises():
     oracle = _make_oracle()
-    with patch.object(oracle, "w3"):
-        with pytest.raises(OracleFeedNotFound):
-            oracle.get_price("UNKNOWN/PAIR")
+    # Inject a mock web3 into the underlying attribute so the `w3` property
+    # short-circuits without trying to connect.
+    mock_w3 = MagicMock()
+    mock_w3.is_connected.return_value = True
+    oracle._w3 = mock_w3
+    with pytest.raises(OracleFeedNotFound):
+        oracle.get_price("UNKNOWN/PAIR")
 
 
 def test_connection_error_wraps():
