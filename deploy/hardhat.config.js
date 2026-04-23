@@ -2,8 +2,18 @@ require("@nomicfoundation/hardhat-toolbox");
 
 module.exports = {
   solidity: {
-    version: "0.8.24",
-    settings: { optimizer: { enabled: true, runs: 200 } },
+    version: "0.8.26",
+    settings: {
+      optimizer: { enabled: true, runs: 200 },
+      evmVersion: "cancun",
+    },
+  },
+  paths: {
+    root: "..",
+    sources: "contracts",
+    tests: "tests/contracts",
+    cache: "deploy/cache",
+    artifacts: "deploy/artifacts",
   },
   networks: {
     hardhat: {},
