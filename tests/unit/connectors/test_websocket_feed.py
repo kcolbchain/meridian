@@ -4,10 +4,14 @@ import asyncio
 import json
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+from decimal import Decimal
+from datetime import datetime, timezone
+
 from src.connectors.websocket_feed import (
     WebSocketPriceFeed,
     WebSocketConfig,
     create_uniswap_ws_config,
+    UNISWAP_V3_SWAP_TOPIC,
 )
 from src.oracle.price_feed import PricePoint
 
@@ -167,10 +171,23 @@ class TestConnectionState:
 
 class TestUniswapConfig:
     def test_create_uniswap_ws_config(self):
-        config = create_uniswap_ws_config("0x1234", "ethereum")
-        assert "eth-mainnet" in config.url
+        config = create_uniswap_ws_config(
+            "0x1234",
+            "ethereum",
+            provider_key="alchemy-key",
+            asset="ETH/USDC",
+            token0_decimals=18,
+            token1_decimals=6,
+            invert_price=True,
+        )
+        assert config.url == "wss://eth-mainnet.g.alchemy.com/v2/alchemy-key"
+        assert config.asset == "ETH/USDC"
+        assert config.token0_decimals == 18
+        assert config.token1_decimals == 6
+        assert config.invert_price is True
         assert config.subscription_msg["method"] == "eth_subscribe"
         assert "logs" in config.subscription_msg["params"]
+        assert config.subscription_msg["params"][1]["topics"] == [UNISWAP_V3_SWAP_TOPIC]
 
     def test_create_uniswap_ws_config_arbitrum(self):
         config = create_uniswap_ws_config("0x5678", "arbitrum")
@@ -195,3 +212,74 @@ class TestMessageHandling:
     async def test_handle_missing_fields(self, feed):
         msg = json.dumps({"foo": "bar"})
         await feed._handle_message(msg)  # Should not raise, no price set
+        assert feed.get_price("ETH/USD") is None
+
+
+# ── Uniswap V3 swap event parsing ─────────────────────────────────────────────
+
+def _uniswap_swap_message(sqrt_price_x96: int, timestamp: int = 1_700_000_000) -> dict:
+    # Five ABI words: amount0, amount1, sqrtPriceX96, liquidity, tick.
+    words = [0, 0, sqrt_price_x96, 0, 0]
+    return {
+        "jsonrpc": "2.0",
+        "method": "eth_subscription",
+        "params": {
+            "subscription": "0xsub",
+            "result": {
+                "address": "0xpool",
+                "topics": [UNISWAP_V3_SWAP_TOPIC],
+                "data": "0x" + "".join(f"{word:064x}" for word in words),
+                "timestamp": timestamp,
+            },
+        },
+    }
+
+
+class TestUniswapV3SwapParsing:
+    def test_parse_uniswap_v3_swap_event(self):
+        config = WebSocketConfig(
+            url="ws://localhost:8080",
+            subscription_msg={},
+            asset="ETH/USDC",
+            source="uniswap-v3",
+            token0_decimals=18,
+            token1_decimals=6,
+            invert_price=True,
+        )
+        feed = WebSocketPriceFeed(config)
+        # token1/token0 raw price = 2000e-12 after decimal adjustment,
+        # so inverted ETH/USDC price is 500,000,000 when sqrt is sqrt(2000)*Q96.
+        sqrt_price_x96 = int((Decimal(2000).sqrt()) * (Decimal(2) ** 96))
+        point = feed._parse_uniswap_v3_swap(_uniswap_swap_message(sqrt_price_x96))
+        assert point is not None
+        assert point.asset == "ETH/USDC"
+        assert point.source == "uniswap-v3"
+        assert point.confidence == 0.98
+        assert point.timestamp == datetime.fromtimestamp(1_700_000_000, tz=timezone.utc)
+        assert point.price == pytest.approx(500_000_000, rel=1e-12)
+
+    def test_parse_uniswap_v3_swap_without_inversion(self):
+        config = WebSocketConfig(url="ws://localhost:8080", subscription_msg={})
+        feed = WebSocketPriceFeed(config)
+        sqrt_price_x96 = int(Decimal(2).sqrt() * (Decimal(2) ** 96))
+        point = feed._parse_uniswap_v3_swap(_uniswap_swap_message(sqrt_price_x96))
+        assert point is not None
+        assert point.asset == "0xpool"
+        assert point.price == pytest.approx(2.0, rel=1e-15)
+
+    def test_parse_uniswap_v3_swap_ignores_non_swap_logs(self, feed):
+        message = _uniswap_swap_message(int(Decimal(2) ** 96))
+        message["params"]["result"]["topics"] = ["0xdeadbeef"]
+        assert feed._parse_uniswap_v3_swap(message) is None
+
+    @pytest.mark.asyncio
+    async def test_handle_message_updates_cache_from_uniswap_swap(self):
+        config = WebSocketConfig(
+            url="ws://localhost:8080",
+            subscription_msg={},
+            asset="TOKEN1/TOKEN0",
+        )
+        feed = WebSocketPriceFeed(config)
+        message = _uniswap_swap_message(int(Decimal(2) ** 96))
+        await feed._handle_message(json.dumps(message))
+        assert feed.get_price("TOKEN1/TOKEN0").price == pytest.approx(1.0)
