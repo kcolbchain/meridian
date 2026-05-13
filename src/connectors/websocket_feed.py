@@ -11,14 +11,19 @@ Falls back to polling if WebSocket connection fails.
 import asyncio
 import json
 import logging
-from dataclasses import dataclass, field
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from decimal import Decimal, getcontext
 from typing import Callable, Optional
 import websockets
 
 from src.oracle.price_feed import BasePriceFeed, PricePoint
 
 logger = logging.getLogger(__name__)
+
+UNISWAP_V3_SWAP_TOPIC = "0xc42079f94a6350d7e6235f29174924f928cc2ac818ebdf2fb8b6a4a6a6d9b84d"
+UNISWAP_V3_Q192 = Decimal(2) ** 192
+getcontext().prec = 80
 
 
 @dataclass
@@ -29,6 +34,11 @@ class WebSocketConfig:
     ping_interval: float = 20.0
     reconnect_delay: float = 5.0
     max_reconnects: int = 10
+    asset: Optional[str] = None
+    source: str = "websocket"
+    token0_decimals: int = 18
+    token1_decimals: int = 18
+    invert_price: bool = False
 
 
 class WebSocketPriceFeed(BasePriceFeed):
@@ -114,7 +124,7 @@ class WebSocketPriceFeed(BasePriceFeed):
         """Parse incoming WebSocket message and update price cache."""
         try:
             data = json.loads(message)
-            price_point = self._parse_price(data)
+            price_point = self._parse_uniswap_v3_swap(data) or self._parse_price(data)
             if price_point:
                 self._update_price(price_point)
         except json.JSONDecodeError:
@@ -145,8 +155,62 @@ class WebSocketPriceFeed(BasePriceFeed):
             price=float(price),
             currency=data.get("currency", "USD"),
             source=data.get("source", "websocket"),
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             confidence=data.get("confidence", 0.95),
+        )
+
+    def _parse_uniswap_v3_swap(self, data: dict) -> Optional[PricePoint]:
+        """Parse an Ethereum log subscription payload for a Uniswap V3 Swap event.
+
+        The Swap event's data payload contains five ABI-encoded fields:
+        ``amount0``, ``amount1``, ``sqrtPriceX96``, ``liquidity``, and ``tick``.
+        The live pool price is derived from ``sqrtPriceX96`` as token1 per token0,
+        adjusted by token decimal differences. Use ``invert_price=True`` when the
+        configured asset should be represented as token0 per token1.
+        """
+        params = data.get("params") or {}
+        result = params.get("result") if isinstance(params, dict) else None
+        if not isinstance(result, dict):
+            return None
+
+        topics = result.get("topics") or []
+        if not topics or str(topics[0]).lower() != UNISWAP_V3_SWAP_TOPIC:
+            return None
+
+        raw_data = result.get("data")
+        if not isinstance(raw_data, str) or not raw_data.startswith("0x"):
+            return None
+        encoded = raw_data[2:]
+        if len(encoded) < 64 * 5:
+            return None
+
+        try:
+            sqrt_price_x96 = int(encoded[64 * 2:64 * 3], 16)
+        except ValueError:
+            return None
+        if sqrt_price_x96 <= 0:
+            return None
+
+        raw_price = (Decimal(sqrt_price_x96) * Decimal(sqrt_price_x96)) / UNISWAP_V3_Q192
+        decimal_adjustment = Decimal(10) ** (self.config.token1_decimals - self.config.token0_decimals)
+        price = raw_price * decimal_adjustment
+        if self.config.invert_price:
+            if price == 0:
+                return None
+            price = Decimal(1) / price
+
+        block_timestamp = data.get("timestamp") or result.get("timestamp")
+        timestamp = datetime.now(timezone.utc)
+        if isinstance(block_timestamp, (int, float)):
+            timestamp = datetime.fromtimestamp(block_timestamp, tz=timezone.utc)
+
+        return PricePoint(
+            asset=self.config.asset or result.get("address", "UNISWAP-V3"),
+            price=float(price),
+            currency="USD",
+            source="uniswap-v3",
+            timestamp=timestamp,
+            confidence=0.98,
         )
 
     def _update_price(self, point: PricePoint):
@@ -178,28 +242,52 @@ class WebSocketPriceFeed(BasePriceFeed):
         return self._reconnect_count
 
 
-def create_uniswap_ws_config(pool_address: str, chain: str = "ethereum") -> WebSocketConfig:
-    """Create WebSocket config for Uniswap V3 pool swap events."""
+def create_uniswap_ws_config(
+    pool_address: str,
+    chain: str = "ethereum",
+    *,
+    provider_key: Optional[str] = None,
+    asset: Optional[str] = None,
+    token0_decimals: int = 18,
+    token1_decimals: int = 18,
+    invert_price: bool = False,
+) -> WebSocketConfig:
+    """Create WebSocket config for Uniswap V3 pool swap events.
+
+    Args:
+        pool_address: Uniswap V3 pool contract address.
+        chain: Supported chain key (``ethereum``, ``arbitrum``, or ``base``).
+        provider_key: Optional Alchemy API key appended to the WebSocket URL.
+        asset: Asset symbol/pair to attach to parsed price points.
+        token0_decimals: Decimals for the pool's token0.
+        token1_decimals: Decimals for the pool's token1.
+        invert_price: Return token0/token1 instead of token1/token0.
+    """
     ws_urls = {
-        "ethereum": "wss://eth-mainnet.g.alchemy.com/v2/",
-        "arbitrum": "wss://arb-mainnet.g.alchemy.com/v2/",
-        "base": "wss://base-mainnet.g.alchemy.com/v2/",
+        "ethereum": "wss://eth-mainnet.g.alchemy.com/v2",
+        "arbitrum": "wss://arb-mainnet.g.alchemy.com/v2",
+        "base": "wss://base-mainnet.g.alchemy.com/v2",
     }
+    base_url = ws_urls.get(chain, ws_urls["ethereum"])
+    url = f"{base_url}/{provider_key}" if provider_key else base_url
 
     return WebSocketConfig(
-        url=ws_urls.get(chain, ws_urls["ethereum"]),
+        url=url,
         subscription_msg={
             "method": "eth_subscribe",
             "params": [
                 "logs",
                 {
                     "address": pool_address,
-                    "topics": [
-                        "0xc42079f94a6350d7e6235f29174924f928cc2ac818ebdf2fb8b6a4a6a6d9b84d"
-                    ]
+                    "topics": [UNISWAP_V3_SWAP_TOPIC]
                 }
             ],
             "id": 1,
             "jsonrpc": "2.0",
         },
+        asset=asset,
+        source="uniswap-v3",
+        token0_decimals=token0_decimals,
+        token1_decimals=token1_decimals,
+        invert_price=invert_price,
     )
