@@ -14,7 +14,6 @@ python -m src.agents.rwa_market_maker --simulate
 
 ### Contracts
 ```bash
-cd deploy
 npm install
 npx hardhat compile
 npx hardhat test
