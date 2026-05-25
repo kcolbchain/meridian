@@ -1,0 +1,1212 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Meridian — RWA market-making lab</title>
+<meta name="description" content="Interactive lab of the Meridian RWA market-making agent: oracle-driven fair value, geography-adaptive spreads, ERC-4626 LP vault, circuit breaker, and idle-yield routing into Lucidly syUSD. The MM agent, in 8 scenes." />
+<meta property="og:title" content="Meridian — RWA market-making lab" />
+<meta property="og:description" content="Watch the Meridian agent ingest oracles, quote bid/ask per geography, fill, rebalance inventory, park idle in syUSD, and trip the circuit breaker on staleness. Treasury reports at end of cycle." />
+<style>
+  :root {
+    --bg: #050709;
+    --panel: #0a0d12;
+    --panel-2: #11151b;
+    --border: #1f242c;
+    --fg: #eef2f7;
+    --muted: #9aa3af;
+    --muted-2: #4a525c;
+    --muted-3: #2d333c;
+
+    --accent: #7dd3fc;       /* meridian cyan (primary) */
+    --accent-dim: #2a6f8a;
+    --signal: #f5c451;       /* gold (secondary — used for contract calls) */
+    --warn: #fb923c;         /* venue / taker orange */
+    --ok: #34d399;           /* money flow / yield green */
+    --hot: #f87171;          /* circuit breaker red */
+    --dsp: #c084fc;          /* oracle purple */
+    --wallet: #eef2f7;
+    --label: #fda4af;
+
+    --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    background:
+      radial-gradient(1200px 800px at 18% 0%, #0a141d 0%, #050709 60%),
+      radial-gradient(900px 600px at 100% 100%, #0d1820 0%, #050709 60%);
+    background-attachment: fixed;
+    color: var(--fg);
+    font: 14px/1.55 var(--sans);
+    overflow: hidden;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .glass {
+    background: rgba(10, 13, 18, 0.6);
+    backdrop-filter: blur(14px) saturate(140%);
+    -webkit-backdrop-filter: blur(14px) saturate(140%);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+  }
+
+  header {
+    padding: 12px 24px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    display: flex; justify-content: space-between; align-items: center; gap: 12px;
+    flex-wrap: wrap;
+    background: rgba(8, 11, 15, 0.55);
+    backdrop-filter: blur(14px) saturate(140%);
+    -webkit-backdrop-filter: blur(14px) saturate(140%);
+  }
+  header .title {
+    margin: 0;
+    font-family: var(--mono);
+    font-size: 14px; font-weight: 600;
+    color: var(--fg);
+    letter-spacing: 0.02em;
+    display: flex; align-items: baseline; gap: 8px;
+  }
+  header .title .play-icon { color: var(--accent); }
+  header .title .tag { color: var(--muted); font-weight: 400; font-size: 12px; }
+  header .crumbs { color: var(--muted-2); font-size: 11px; font-family: var(--mono); }
+  header .links { display: flex; gap: 14px; font-size: 12px; }
+  header .links a { color: var(--muted); }
+  header .links a:hover { color: var(--accent); }
+
+  .scene-bar {
+    display: flex; gap: 6px;
+    padding: 8px 18px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    background: rgba(8, 11, 15, 0.55);
+    backdrop-filter: blur(14px) saturate(140%);
+    -webkit-backdrop-filter: blur(14px) saturate(140%);
+    overflow-x: auto; align-items: center;
+  }
+  .scene-bar::-webkit-scrollbar { height: 0; }
+  .scene-bar button {
+    background: rgba(255, 255, 255, 0.02);
+    color: var(--muted);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    padding: 5px 11px; border-radius: 999px; cursor: pointer;
+    font: inherit; font-size: 12px; white-space: nowrap;
+    display: inline-flex; align-items: center; gap: 6px;
+    transition: color 0.15s, background 0.15s, border-color 0.15s;
+  }
+  .scene-bar button:hover { color: var(--fg); border-color: rgba(125, 211, 252, 0.3); }
+  .scene-bar button.active {
+    background: rgba(125, 211, 252, 0.1);
+    color: var(--accent);
+    border-color: rgba(125, 211, 252, 0.4);
+  }
+  .scene-bar button .num {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted-2);
+  }
+  .scene-bar button.active .num { color: var(--accent-dim); }
+  .scene-bar .placeholder {
+    color: var(--muted-2);
+    font-size: 11px;
+    padding: 5px 11px;
+    border: 1px dashed rgba(255, 255, 255, 0.08);
+    border-radius: 999px;
+    margin-left: auto;
+    font-family: var(--mono);
+  }
+  .scene-bar .placeholder a { color: var(--muted); }
+  .scene-bar .placeholder a:hover { color: var(--accent); text-decoration: none; }
+
+  main {
+    position: fixed;
+    top: 96px; bottom: 0; left: 0; right: 0;
+  }
+  canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
+  .caption {
+    position: fixed;
+    left: 50%; transform: translateX(-50%);
+    bottom: 84px;
+    max-width: 720px; width: calc(100% - 32px);
+    padding: 14px 18px;
+    border-radius: 12px;
+  }
+  .caption .scene-name {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 6px;
+  }
+  .caption .scene-text {
+    font-size: 14px;
+    color: var(--fg);
+    line-height: 1.6;
+  }
+  .caption .scene-text code {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    background: rgba(125, 211, 252, 0.08);
+    color: var(--accent);
+    padding: 1px 6px;
+    border-radius: 4px;
+  }
+
+  .transport {
+    position: fixed;
+    left: 50%; transform: translateX(-50%);
+    bottom: 16px;
+    display: flex; gap: 4px;
+    padding: 6px;
+    border-radius: 999px;
+    align-items: center;
+  }
+  .transport button {
+    background: rgba(255, 255, 255, 0.02);
+    color: var(--muted);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    width: 36px; height: 36px;
+    border-radius: 999px; cursor: pointer;
+    font: inherit; font-size: 14px;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: color 0.15s, background 0.15s;
+  }
+  .transport button:hover { color: var(--accent); border-color: rgba(125, 211, 252, 0.3); }
+  .transport .play.active { color: var(--accent); background: rgba(125, 211, 252, 0.1); }
+  .transport .label {
+    color: var(--muted);
+    font-size: 11px;
+    font-family: var(--mono);
+    padding: 0 12px 0 10px;
+    display: inline-flex; align-items: center;
+    border-left: 1px solid rgba(255, 255, 255, 0.06);
+    margin-left: 4px;
+    white-space: nowrap;
+  }
+  .transport .label .accent { color: var(--accent); }
+
+  .tooltip {
+    position: fixed;
+    pointer-events: none;
+    padding: 8px 12px;
+    border-radius: 8px;
+    font-family: var(--mono);
+    opacity: 0;
+    transform: translate(-50%, -120%);
+    transition: opacity 0.12s;
+    z-index: 50;
+    min-width: 120px;
+  }
+  .tooltip.visible { opacity: 1; }
+  .tooltip .name {
+    color: var(--fg);
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .tooltip .role {
+    color: var(--muted);
+    font-size: 10.5px;
+    margin-top: 2px;
+  }
+  .tooltip .bal {
+    color: var(--accent);
+    font-size: 11px;
+    margin-top: 6px;
+    padding-top: 5px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .tooltip .bal .musd { color: var(--ok); }
+  .tooltip .bal .shares { color: var(--accent); }
+
+  @media (max-width: 720px) {
+    header .title .tag { display: none; }
+    header .crumbs { display: none; }
+    .scene-bar { padding: 8px 12px; }
+    .caption { bottom: 84px; padding: 12px 14px; }
+    .caption .scene-text { font-size: 13px; }
+  }
+</style>
+</head>
+<body>
+  <header>
+    <div class="title">
+      <span class="play-icon">▶</span><span>meridian</span>
+      <span class="tag">— RWA market-making lab</span>
+    </div>
+    <div class="crumbs">kcolbchain · meridian · MM agent v0</div>
+    <div class="links">
+      <a href="https://kcolbchain.com">back to kcolbchain.com</a>
+      <a href="https://github.com/kcolbchain/meridian" target="_blank" rel="noreferrer noopener">github</a>
+    </div>
+  </header>
+
+  <nav class="scene-bar" id="sceneBar"></nav>
+
+  <main>
+    <canvas id="stage"></canvas>
+  </main>
+
+  <div class="caption glass" id="caption">
+    <div class="scene-name" id="sceneName"></div>
+    <div class="scene-text" id="sceneText"></div>
+  </div>
+
+  <div class="transport glass">
+    <button id="btnRestart" title="Restart scene (r)" aria-label="Restart">⟲</button>
+    <button id="btnPrev" title="Previous scene" aria-label="Previous">⏮</button>
+    <button id="btnPlay" class="play active" title="Play / pause (space)" aria-label="Play/pause">⏸</button>
+    <button id="btnStep" title="Step forward (n)" aria-label="Step">⏭</button>
+    <button id="btnNext" title="Next scene" aria-label="Next scene">⏭⏭</button>
+    <span class="label" id="stepLabel"><span class="accent">scene 1/8</span> · step 0</span>
+  </div>
+
+  <div class="tooltip glass" id="tooltip">
+    <div class="name" id="tooltipName"></div>
+    <div class="role" id="tooltipRole"></div>
+    <div class="bal" id="tooltipBal" style="display: none"></div>
+  </div>
+
+<script>
+"use strict";
+
+// ──────────────────────────────────────────────────────────────────────
+// Canvas & DPR
+// ──────────────────────────────────────────────────────────────────────
+
+const canvas = document.getElementById("stage");
+const ctx = canvas.getContext("2d");
+let W = 0, H = 0, DPR = 1;
+
+function resize() {
+  DPR = Math.max(1, window.devicePixelRatio || 1);
+  const rect = canvas.parentElement.getBoundingClientRect();
+  W = rect.width;
+  H = rect.height;
+  canvas.width = Math.round(W * DPR);
+  canvas.height = Math.round(H * DPR);
+  canvas.style.width = W + "px";
+  canvas.style.height = H + "px";
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+window.addEventListener("resize", resize);
+
+// ──────────────────────────────────────────────────────────────────────
+// Color palette (read from CSS vars so theme changes propagate)
+// ──────────────────────────────────────────────────────────────────────
+
+function cssVar(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+const COLORS = () => ({
+  fg: cssVar("--fg"),
+  muted: cssVar("--muted"),
+  muted2: cssVar("--muted-2"),
+  muted3: cssVar("--muted-3"),
+  accent: cssVar("--accent"),
+  accentDim: cssVar("--accent-dim"),
+  signal: cssVar("--signal"),
+  warn: cssVar("--warn"),
+  ok: cssVar("--ok"),
+  hot: cssVar("--hot"),
+  dsp: cssVar("--dsp"),
+  wallet: cssVar("--wallet"),
+  label: cssVar("--label"),
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// Agent registry
+//   oracle   — diamond, purple (--dsp)
+//   agent    — hex, accent cyan (the MM agent)
+//   pool     — hex, signal gold (the CR8-USD / RWA AMM pool)
+//   venue    — square, orange (--warn) (maker / taker venues, RFQ desks)
+//   lucidly  — circle, ok-green (idle-yield destination)
+//   geo      — wallet shape, white (geography lane label endpoints)
+// ──────────────────────────────────────────────────────────────────────
+
+const AGENT_TYPES = {
+  oracle:   { color: "dsp",     shape: "diamond", r: 24 },
+  agent:    { color: "accent",  shape: "hex",     r: 34 },
+  pool:     { color: "signal",  shape: "hex",     r: 30 },
+  venue:    { color: "warn",    shape: "square",  r: 24 },
+  lucidly:  { color: "ok",      shape: "circle",  r: 26 },
+  geo:      { color: "wallet",  shape: "circle",  r: 20 },
+  wallet:   { color: "wallet",  shape: "circle",  r: 22 },
+};
+
+function makeAgent({ id, name, role, type = "wallet", x = 0, y = 0, r, color, shape, note = "", balance = null, shares = null, hidden = false }) {
+  const typeDef = AGENT_TYPES[type] || AGENT_TYPES.wallet;
+  return {
+    id, name, role, type, note,
+    x, y, targetX: x, targetY: y,
+    r: r ?? typeDef.r,
+    colorKey: color ?? typeDef.color,
+    shape: shape ?? typeDef.shape,
+    balance, shares,
+    hidden,
+    flash: 0,          // 0..1 — pulses for activity
+    glow: 0,           // 0..1 — sustained highlight
+    appear: hidden ? 0 : 1,
+  };
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Drawing primitives
+// ──────────────────────────────────────────────────────────────────────
+
+function drawCircle(x, y, r, fill, stroke, lw = 1.5) {
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw; ctx.stroke(); }
+}
+
+function drawHex(x, y, r, fill, stroke, lw = 1.5) {
+  ctx.beginPath();
+  for (let i = 0; i < 6; i++) {
+    const a = (Math.PI / 3) * i - Math.PI / 2;
+    const px = x + Math.cos(a) * r;
+    const py = y + Math.sin(a) * r;
+    if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw; ctx.stroke(); }
+}
+
+function drawSquare(x, y, r, fill, stroke, lw = 1.5) {
+  const s = r * 1.6;
+  ctx.beginPath();
+  ctx.rect(x - s / 2, y - s / 2, s, s);
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw; ctx.stroke(); }
+}
+
+function drawDiamond(x, y, r, fill, stroke, lw = 1.5) {
+  ctx.beginPath();
+  ctx.moveTo(x, y - r);
+  ctx.lineTo(x + r, y);
+  ctx.lineTo(x, y + r);
+  ctx.lineTo(x - r, y);
+  ctx.closePath();
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw; ctx.stroke(); }
+}
+
+function withAlpha(hex, alpha) {
+  // hex is "#rrggbb" or "#rgb"
+  let h = hex.replace("#", "");
+  if (h.length === 3) h = h.split("").map(c => c + c).join("");
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function drawAgent(a) {
+  if (a.appear <= 0) return;
+  const C = COLORS();
+  const baseColor = C[a.colorKey] || a.colorKey;
+  const flashBoost = 0.4 * a.flash;
+  const glowBoost = 0.5 * a.glow;
+  const haloA = Math.min(1, 0.16 + flashBoost + glowBoost);
+  const fillA = 0.12 + flashBoost;
+  const strokeA = Math.min(1, 0.7 + flashBoost * 0.5 + glowBoost * 0.5);
+
+  // Halo
+  if (haloA > 0.16) {
+    const haloR = a.r + 8 + 6 * a.flash;
+    ctx.save();
+    ctx.globalAlpha = a.appear;
+    drawCircle(a.x, a.y, haloR, withAlpha(baseColor, haloA * 0.4));
+    ctx.restore();
+  }
+
+  // Shape
+  ctx.save();
+  ctx.globalAlpha = a.appear;
+  const fill = withAlpha(baseColor, fillA);
+  const stroke = withAlpha(baseColor, strokeA);
+  if (a.shape === "hex") drawHex(a.x, a.y, a.r, fill, stroke, 2);
+  else if (a.shape === "square") drawSquare(a.x, a.y, a.r, fill, stroke, 1.8);
+  else if (a.shape === "diamond") drawDiamond(a.x, a.y, a.r, fill, stroke, 1.8);
+  else drawCircle(a.x, a.y, a.r, fill, stroke, 1.8);
+
+  // Name label
+  ctx.fillStyle = withAlpha(C.fg, 0.92);
+  ctx.font = "600 12px " + cssVar("--mono");
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+  ctx.fillText(a.name, a.x, a.y + a.r + 8);
+
+  // Role label
+  if (a.role) {
+    ctx.fillStyle = withAlpha(C.muted, 0.85);
+    ctx.font = "10.5px " + cssVar("--mono");
+    ctx.fillText(a.role, a.x, a.y + a.r + 22);
+  }
+
+  // Note (state hint above)
+  if (a.note) {
+    ctx.fillStyle = withAlpha(C.accent, 0.9);
+    ctx.font = "10px " + cssVar("--mono");
+    ctx.textBaseline = "bottom";
+    ctx.fillText(a.note, a.x, a.y - a.r - 8);
+  }
+
+  // Balance / shares (inside the shape, if set)
+  if (a.balance !== null && a.balance !== undefined) {
+    ctx.fillStyle = withAlpha(C.ok, 0.95);
+    ctx.font = "600 10px " + cssVar("--mono");
+    ctx.textBaseline = "middle";
+    ctx.textAlign = "center";
+    ctx.fillText("$" + formatMoney(a.balance), a.x, a.y);
+  } else if (a.shares !== null && a.shares !== undefined) {
+    ctx.fillStyle = withAlpha(C.accent, 0.95);
+    ctx.font = "600 10.5px " + cssVar("--mono");
+    ctx.textBaseline = "middle";
+    ctx.textAlign = "center";
+    ctx.fillText(a.shares, a.x, a.y);
+  }
+  ctx.restore();
+}
+
+function formatMoney(n) {
+  if (n >= 1000) return (n / 1000).toFixed(n >= 10000 ? 0 : 1) + "k";
+  return Math.round(n).toString();
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Transactions (flows between agents)
+// ──────────────────────────────────────────────────────────────────────
+
+const txs = [];
+let txIdCounter = 0;
+
+function addTx({ from, to, color = "accent", label = "", dur = 1200, dotSize = 4, curve = 0 }) {
+  txIdCounter++;
+  txs.push({
+    id: txIdCounter,
+    from, to, color, label, curve,
+    t0: performance.now(),
+    dur,
+    dotSize,
+  });
+}
+
+function drawTx(tx, now) {
+  const a = byId(tx.from);
+  const b = byId(tx.to);
+  if (!a || !b) return false;
+  const u = Math.min(1, (now - tx.t0) / tx.dur);
+  if (u >= 1) return false;
+
+  const C = COLORS();
+  const color = C[tx.color] || tx.color;
+
+  // Control point for slight curve
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const nx = -dy, ny = dx; // perpendicular
+  const mag = Math.hypot(nx, ny) || 1;
+  const offset = tx.curve;
+  const cx = (a.x + b.x) / 2 + (nx / mag) * offset;
+  const cy = (a.y + b.y) / 2 + (ny / mag) * offset;
+
+  function bezier(t) {
+    const mt = 1 - t;
+    return {
+      x: mt * mt * a.x + 2 * mt * t * cx + t * t * b.x,
+      y: mt * mt * a.y + 2 * mt * t * cy + t * t * b.y,
+    };
+  }
+
+  // Trail
+  ctx.save();
+  ctx.strokeStyle = withAlpha(color, 0.18);
+  ctx.lineWidth = 1.2;
+  ctx.setLineDash([2, 4]);
+  ctx.beginPath();
+  const p0 = bezier(0);
+  ctx.moveTo(p0.x, p0.y);
+  for (let s = 0.05; s <= 1; s += 0.05) {
+    const p = bezier(s);
+    ctx.lineTo(p.x, p.y);
+  }
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Moving dot
+  const p = bezier(u);
+  drawCircle(p.x, p.y, tx.dotSize + 1, withAlpha(color, 0.3));
+  drawCircle(p.x, p.y, tx.dotSize, color);
+
+  // Label near the dot
+  if (tx.label) {
+    ctx.fillStyle = withAlpha(color, 0.95);
+    ctx.font = "600 10.5px " + cssVar("--mono");
+    ctx.textAlign = "center";
+    ctx.textBaseline = "bottom";
+    ctx.fillText(tx.label, p.x, p.y - tx.dotSize - 6);
+  }
+  ctx.restore();
+
+  return true;
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Geography-lane band drawing (used by scenes 2-3)
+// ──────────────────────────────────────────────────────────────────────
+
+let geoLanes = null; // { lanes: [{label, y, color, dim}], xLeft, xRight }
+
+function drawGeoLanes() {
+  if (!geoLanes) return;
+  const C = COLORS();
+  ctx.save();
+  for (const lane of geoLanes.lanes) {
+    const laneCol = C[lane.color] || lane.color;
+    const alpha = lane.dim ? 0.04 : 0.07;
+    // band fill
+    ctx.fillStyle = withAlpha(laneCol, alpha);
+    ctx.fillRect(geoLanes.xLeft, lane.y - 70, geoLanes.xRight - geoLanes.xLeft, 140);
+    // band border
+    ctx.strokeStyle = withAlpha(laneCol, lane.dim ? 0.18 : 0.3);
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 6]);
+    ctx.beginPath();
+    ctx.moveTo(geoLanes.xLeft, lane.y - 70);
+    ctx.lineTo(geoLanes.xRight, lane.y - 70);
+    ctx.moveTo(geoLanes.xLeft, lane.y + 70);
+    ctx.lineTo(geoLanes.xRight, lane.y + 70);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // label
+    ctx.fillStyle = withAlpha(laneCol, lane.dim ? 0.45 : 0.85);
+    ctx.font = "600 10px " + cssVar("--mono");
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillText(lane.label, geoLanes.xLeft + 10, lane.y - 56);
+    if (lane.sub) {
+      ctx.fillStyle = withAlpha(C.muted, lane.dim ? 0.4 : 0.65);
+      ctx.font = "10px " + cssVar("--mono");
+      ctx.fillText(lane.sub, geoLanes.xLeft + 10, lane.y - 42);
+    }
+  }
+  ctx.restore();
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// State
+// ──────────────────────────────────────────────────────────────────────
+
+let agents = {};
+function byId(id) { return agents[id]; }
+let currentScene = 0;
+let currentStep = -1;
+let playing = true;
+let stepClock = 0;       // ms since last step trigger
+const STEP_INTERVAL = 1800; // ms between auto-steps
+let needsStepInit = true;
+
+// ──────────────────────────────────────────────────────────────────────
+// Scenes — each scene is { name, captions, setup(), steps:[fn(now)] }
+// ──────────────────────────────────────────────────────────────────────
+
+const SCENES = [];
+
+// ─── Scene 1: "Oracle waterfall" ──────────────────────────────────────
+SCENES.push({
+  name: "Oracle waterfall",
+  captions: [
+    "Three feeds wake up. Meridian's <code>OracleAdapter</code> reads them every block to compute fair value for the RWA token in the CR8-USD pool.",
+    "Chainlink pushes the asset price: <code>$103.42</code>, confidence <code>9600 bps</code>, freshness <code>18s</code>.",
+    "A geography-keyed rates feed lands: <code>US 4.85%</code>, <code>EM 11.20%</code>. Custodian attests reserves <code>1:1.003</code>, freshness <code>42s</code>.",
+    "<code>OracleAdapter</code> normalizes the three feeds, stamps a tick, and forwards the bundle to the agent. <code>isDataFresh</code> returns true.",
+  ],
+  setup() {
+    geoLanes = null;
+    const cx = W / 2, cy = H / 2 - 20;
+    agents = {
+      chainlink: makeAgent({ id: "chainlink", name: "Chainlink", role: "asset price", type: "oracle", x: cx - 320, y: cy - 140 }),
+      rates:     makeAgent({ id: "rates", name: "Rates feed", role: "geo risk-free", type: "oracle", x: cx - 360, y: cy }),
+      custodian: makeAgent({ id: "custodian", name: "Custodian", role: "attestation", type: "oracle", x: cx - 320, y: cy + 140 }),
+      adapter:   makeAgent({ id: "adapter", name: "OracleAdapter", role: "normalize · stamp · forward", type: "agent", x: cx, y: cy, note: "" }),
+      mm:        makeAgent({ id: "mm", name: "MM agent", role: "Meridian", type: "agent", x: cx + 320, y: cy, note: "idle" }),
+    };
+  },
+  steps: [
+    () => { /* idle */ },
+    (now) => {
+      addTx({ from: "chainlink", to: "adapter", color: "dsp", label: "$103.42 · 9600 bps", dur: 1500, curve: 20 });
+      byId("chainlink").flash = 1;
+      setTimeout(() => { byId("adapter").note = "+ price"; byId("adapter").flash = 1; }, 1300);
+    },
+    (now) => {
+      addTx({ from: "rates", to: "adapter", color: "dsp", label: "rates · US/EM", dur: 1400 });
+      byId("rates").flash = 1;
+      setTimeout(() => {
+        addTx({ from: "custodian", to: "adapter", color: "dsp", label: "attest 1:1.003", dur: 1400, curve: -20 });
+        byId("custodian").flash = 1;
+      }, 600);
+      setTimeout(() => { byId("adapter").note = "+ rates + attest"; byId("adapter").flash = 1; }, 1600);
+    },
+    (now) => {
+      byId("adapter").note = "tick #14821 · fresh";
+      byId("adapter").glow = 1;
+      addTx({ from: "adapter", to: "mm", color: "accent", label: "feedBundle", dur: 1400 });
+      setTimeout(() => { byId("mm").note = "fair value $103.42"; byId("mm").glow = 0.8; }, 1300);
+    },
+  ],
+});
+
+// ─── Scene 2: "Fair value & spread" ───────────────────────────────────
+SCENES.push({
+  name: "Fair value & spread",
+  captions: [
+    "Three geography lanes — US, EM, Restricted. The agent computes mid = oracle-weighted fair value, then sets a per-lane spread.",
+    "<code>spread = base · geo_multiplier</code>. US <code>×1.00</code> → <code>5 bps</code>. EM <code>×1.20</code> → <code>30 bps</code> (illiquidity premium).",
+    "Restricted region is sanctions-flagged in <code>OracleAdapter</code>. Spread isn't widened — it's <code>null</code>. Quotes will not be posted.",
+    "Three quote intents emitted, lane-scoped. The agent's internal mid is still <code>$103.42</code> across all lanes; only the spread differs.",
+  ],
+  setup() {
+    const cx = W / 2, cy = H / 2 - 20;
+    geoLanes = {
+      xLeft: 60, xRight: W - 60,
+      lanes: [
+        { label: "US lane", sub: "spread ×1.00 = 5 bps", y: cy - 160, color: "ok" },
+        { label: "EM lane", sub: "spread ×1.20 = 30 bps", y: cy, color: "signal" },
+        { label: "Restricted", sub: "sanctions-flagged · null quote", y: cy + 160, color: "hot", dim: true },
+      ],
+    };
+    agents = {
+      mm:    makeAgent({ id: "mm", name: "MM agent", role: "fair value $103.42", type: "agent", x: cx - 220, y: cy }),
+      qUS:   makeAgent({ id: "qUS", name: "US intent", role: "bid/ask · 5 bps", type: "wallet", x: cx + 240, y: cy - 160, hidden: true }),
+      qEM:   makeAgent({ id: "qEM", name: "EM intent", role: "bid/ask · 30 bps", type: "wallet", x: cx + 240, y: cy, hidden: true }),
+      qR:    makeAgent({ id: "qR", name: "Restricted", role: "null · gated", type: "wallet", x: cx + 240, y: cy + 160, hidden: true, color: "hot" }),
+    };
+  },
+  steps: [
+    () => { /* idle */ },
+    (now) => {
+      byId("qUS").hidden = false; byId("qUS").appear = 0;
+      byId("qEM").hidden = false; byId("qEM").appear = 0;
+      byId("mm").flash = 1;
+      addTx({ from: "mm", to: "qUS", color: "ok", label: "bid 103.37 / ask 103.47", dur: 1500 });
+      setTimeout(() => addTx({ from: "mm", to: "qEM", color: "signal", label: "bid 103.11 / ask 103.73", dur: 1500 }), 250);
+    },
+    (now) => {
+      byId("qR").hidden = false; byId("qR").appear = 0;
+      addTx({ from: "mm", to: "qR", color: "hot", label: "gated · no quote", dur: 1500 });
+      setTimeout(() => { byId("qR").note = "spread = null"; byId("qR").glow = 0.5; }, 1300);
+    },
+    (now) => {
+      byId("qUS").glow = 0.8;
+      byId("qEM").glow = 0.8;
+      byId("mm").note = "3 intents · 2 active";
+      byId("mm").glow = 0.7;
+    },
+  ],
+});
+
+// ─── Scene 3: "Quotes go out" ─────────────────────────────────────────
+SCENES.push({
+  name: "Quotes go out",
+  captions: [
+    "Each active intent posts to a geography-gated venue. US lane: an AMM pool. EM lane: an RFQ desk. Restricted: nothing leaves the agent.",
+    "US quote hits the CR8-USD / RWA AMM via <code>StrategyExecutor.postQuote</code>. Tick depth <code>$25k</code> a side.",
+    "EM quote hits the RFQ desk with a 12-second TTL. The desk holds it for an EM-compliant taker.",
+    "Restricted lane stays dark. The agent's <code>postQuote</code> short-circuits when <code>geo == sanctioned</code> — no calldata, no gas.",
+  ],
+  setup() {
+    const cx = W / 2, cy = H / 2 - 20;
+    geoLanes = {
+      xLeft: 60, xRight: W - 60,
+      lanes: [
+        { label: "US lane", sub: "AMM · CR8-USD/RWA", y: cy - 160, color: "ok" },
+        { label: "EM lane", sub: "RFQ desk · 12s TTL", y: cy, color: "signal" },
+        { label: "Restricted", sub: "no calldata emitted", y: cy + 160, color: "hot", dim: true },
+      ],
+    };
+    agents = {
+      mm:    makeAgent({ id: "mm", name: "MM agent", role: "postQuote", type: "agent", x: cx - 260, y: cy }),
+      ammUS: makeAgent({ id: "ammUS", name: "CR8/RWA AMM", role: "US pool", type: "pool", x: cx + 200, y: cy - 160 }),
+      rfqEM: makeAgent({ id: "rfqEM", name: "RFQ desk", role: "EM venue", type: "venue", x: cx + 200, y: cy }),
+      vR:    makeAgent({ id: "vR", name: "—", role: "gated", type: "venue", x: cx + 200, y: cy + 160, color: "hot" }),
+    };
+    byId("vR").note = "no quote";
+  },
+  steps: [
+    () => { /* idle */ },
+    (now) => {
+      addTx({ from: "mm", to: "ammUS", color: "ok", label: "5 bps · $25k/side", dur: 1500 });
+      byId("mm").flash = 1;
+      setTimeout(() => { byId("ammUS").note = "bid 103.37 / ask 103.47"; byId("ammUS").flash = 1; byId("ammUS").glow = 0.8; }, 1300);
+    },
+    (now) => {
+      addTx({ from: "mm", to: "rfqEM", color: "signal", label: "30 bps · TTL 12s", dur: 1500 });
+      setTimeout(() => { byId("rfqEM").note = "bid 103.11 / ask 103.73"; byId("rfqEM").flash = 1; byId("rfqEM").glow = 0.7; }, 1300);
+    },
+    (now) => {
+      // No tx for restricted lane — emphasize the absence
+      byId("vR").flash = 0.3;
+      byId("vR").glow = 0.3;
+      byId("mm").note = "2 posted · 1 gated";
+      byId("mm").glow = 0.7;
+    },
+  ],
+});
+
+// ─── Scene 4: "Fill arrives" ──────────────────────────────────────────
+SCENES.push({
+  name: "Fill arrives",
+  captions: [
+    "A US taker walks into the AMM and hits the bid. <code>$12k</code> CR8-USD flows in, RWA token flows out.",
+    "<code>MeridianVault.executeTrade</code> records the fill. Pool inventory shifts: <code>+118</code> RWA, <code>-12,200</code> CR8-USD.",
+    "The agent updates its internal mid by the inventory-skew rule. Next quote will widen the bid and tighten the ask to mean-revert.",
+  ],
+  setup() {
+    geoLanes = null;
+    const cx = W / 2, cy = H / 2 - 20;
+    agents = {
+      taker: makeAgent({ id: "taker", name: "US taker", role: "AMM swap", type: "venue", x: cx - 320, y: cy }),
+      pool:  makeAgent({ id: "pool", name: "CR8/RWA pool", role: "inventory · 1.0 RWA : 103.4 CR8-USD", type: "pool", x: cx, y: cy, note: "" }),
+      vault: makeAgent({ id: "vault", name: "MeridianVault", role: "executeTrade hook", type: "agent", x: cx, y: cy - 170, r: 26 }),
+      mm:    makeAgent({ id: "mm", name: "MM agent", role: "skew engine", type: "agent", x: cx + 320, y: cy }),
+    };
+  },
+  steps: [
+    () => { /* idle */ },
+    (now) => {
+      addTx({ from: "taker", to: "pool", color: "warn", label: "$12k → buy 116 RWA", dur: 1500 });
+      byId("taker").flash = 1;
+      setTimeout(() => { byId("pool").flash = 1; byId("pool").note = "fill · +12k CR8-USD"; }, 1300);
+    },
+    (now) => {
+      addTx({ from: "pool", to: "vault", color: "signal", label: "executeTrade fill", dur: 1100, curve: 30 });
+      byId("vault").flash = 1;
+      setTimeout(() => addTx({ from: "vault", to: "mm", color: "signal", label: "inv: -116 RWA, +12k CR8", dur: 1100 }), 900);
+      setTimeout(() => byId("pool").note = "inv: 884 RWA / 115.6k CR8-USD", 1500);
+    },
+    (now) => {
+      byId("mm").note = "mid skew +0.04% · widen bid";
+      byId("mm").glow = 0.9;
+      byId("pool").glow = 0.6;
+    },
+  ],
+});
+
+// ─── Scene 5: "Inventory rebalance" ───────────────────────────────────
+SCENES.push({
+  name: "Inventory rebalance",
+  captions: [
+    "Three more US fills and one EM fill later, RWA inventory has drifted <code>+12%</code> above target. The <code>RiskManager</code> trips a rebalance.",
+    "The agent routes an aggressive ask through the resolver to a deeper external venue — a sister AMM and a CEX-style RFQ. <code>$8k</code> RWA out.",
+    "Inventory falls back inside the <code>±5%</code> band. <code>RiskManager</code> clears the flag. Quoting resumes at normal spread.",
+  ],
+  setup() {
+    geoLanes = null;
+    const cx = W / 2, cy = H / 2 - 20;
+    agents = {
+      pool:     makeAgent({ id: "pool", name: "CR8/RWA pool", role: "+12% over target", type: "pool", x: cx - 300, y: cy, note: "drift +12%" }),
+      risk:     makeAgent({ id: "risk", name: "RiskManager", role: "inventory caps", type: "agent", x: cx, y: cy - 160, r: 26 }),
+      mm:       makeAgent({ id: "mm", name: "MM agent", role: "rebalance mode", type: "agent", x: cx, y: cy }),
+      resolver: makeAgent({ id: "resolver", name: "Resolver", role: "venue router", type: "agent", x: cx + 220, y: cy, r: 26 }),
+      sister:   makeAgent({ id: "sister", name: "Sister AMM", role: "external venue", type: "venue", x: cx + 320, y: cy - 130 }),
+      rfq:      makeAgent({ id: "rfq", name: "OTC RFQ", role: "deep block", type: "venue", x: cx + 320, y: cy + 130 }),
+    };
+  },
+  steps: [
+    () => { /* idle */ },
+    (now) => {
+      addTx({ from: "pool", to: "risk", color: "hot", label: "drift > +10%", dur: 1300 });
+      byId("risk").flash = 1;
+      setTimeout(() => {
+        addTx({ from: "risk", to: "mm", color: "signal", label: "rebalance · ask-side", dur: 1200 });
+        byId("mm").flash = 1;
+      }, 1100);
+    },
+    (now) => {
+      addTx({ from: "mm", to: "resolver", color: "accent", label: "sell 80 RWA", dur: 1200 });
+      setTimeout(() => addTx({ from: "resolver", to: "sister", color: "warn", label: "50 RWA @ 103.30", dur: 1200, curve: 20 }), 900);
+      setTimeout(() => addTx({ from: "resolver", to: "rfq", color: "warn", label: "30 RWA @ 103.25", dur: 1200, curve: -20 }), 1100);
+      setTimeout(() => { byId("pool").note = "drift +3%"; byId("pool").flash = 1; }, 2000);
+    },
+    (now) => {
+      byId("pool").note = "in-band ±5%";
+      byId("pool").glow = 0.8;
+      byId("risk").note = "cleared";
+      byId("mm").note = "normal spread";
+      byId("mm").glow = 0.7;
+    },
+  ],
+});
+
+// ─── Scene 6: "Idle yield park" ───────────────────────────────────────
+SCENES.push({
+  name: "Idle yield park",
+  captions: [
+    "After the rebalance, idle CR8-USD on the vault is <code>$48k</code> over the working-capital target. Sitting still earns nothing.",
+    "The agent calls <code>StrategyExecutor.parkIdle</code>. Approved route: CR8-USD → Lucidly syUSD vault. Yield accrues at <code>~4.8% APY</code>.",
+    "Receipt comes back as syUSD shares. Bookkeeping marks the position as <code>idle-yield</code>; it's still in the LP's NAV, just earning while it waits.",
+  ],
+  setup() {
+    geoLanes = null;
+    const cx = W / 2, cy = H / 2 - 20;
+    agents = {
+      vault:   makeAgent({ id: "vault", name: "MeridianVault", role: "idle CR8-USD: $48k over target", type: "agent", x: cx - 300, y: cy, balance: 48000 }),
+      mm:      makeAgent({ id: "mm", name: "MM agent", role: "parkIdle", type: "agent", x: cx, y: cy - 150, r: 26 }),
+      execr:   makeAgent({ id: "execr", name: "StrategyExecutor", role: "approved route", type: "agent", x: cx, y: cy, r: 26 }),
+      lucidly: makeAgent({ id: "lucidly", name: "Lucidly syUSD", role: "yield vault", type: "lucidly", x: cx + 300, y: cy, balance: 0 }),
+    };
+  },
+  steps: [
+    () => { /* idle */ },
+    (now) => {
+      byId("vault").flash = 1;
+      addTx({ from: "vault", to: "mm", color: "signal", label: "idle: $48k", dur: 1200, curve: -20 });
+      setTimeout(() => addTx({ from: "mm", to: "execr", color: "accent", label: "parkIdle($48k)", dur: 1200 }), 900);
+      setTimeout(() => byId("execr").note = "route: CR8-USD → syUSD", 1700);
+    },
+    (now) => {
+      addTx({ from: "execr", to: "lucidly", color: "ok", label: "$48k CR8-USD", dur: 1400 });
+      setTimeout(() => {
+        byId("lucidly").balance = 48000;
+        byId("lucidly").flash = 1;
+        byId("lucidly").note = "+47.86k syUSD shares";
+        addTx({ from: "lucidly", to: "vault", color: "ok", label: "47.86k syUSD shares", dur: 1300, curve: 30 });
+      }, 1200);
+      setTimeout(() => byId("vault").balance = 0, 2400);
+    },
+    (now) => {
+      byId("lucidly").glow = 1;
+      byId("vault").note = "idle-yield · ~4.8% APY";
+      byId("vault").glow = 0.7;
+    },
+  ],
+});
+
+// ─── Scene 7: "Circuit breaker" ───────────────────────────────────────
+SCENES.push({
+  name: "Circuit breaker",
+  captions: [
+    "Next tick. Chainlink's confidence collapses to <code>6800 bps</code> — under the <code>7500</code> floor. <code>OracleAdapter.isDataFresh</code> goes false.",
+    "Same tick: on-chain mid moves <code>+3.4σ</code> from the EWMA. Two reasons to halt — either alone would have done it.",
+    "<code>MeridianVault.setCircuitBreaker(true)</code> fires. All open quotes are pulled. The owner address is paged.",
+  ],
+  setup() {
+    geoLanes = null;
+    const cx = W / 2, cy = H / 2 - 20;
+    agents = {
+      chainlink: makeAgent({ id: "chainlink", name: "Chainlink", role: "conf 6800 bps", type: "oracle", x: cx - 320, y: cy - 130, color: "hot" }),
+      adapter:   makeAgent({ id: "adapter", name: "OracleAdapter", role: "isDataFresh = false", type: "agent", x: cx - 100, y: cy - 60, r: 26 }),
+      mm:        makeAgent({ id: "mm", name: "MM agent", role: "3.4σ divergence", type: "agent", x: cx + 100, y: cy - 60 }),
+      vault:     makeAgent({ id: "vault", name: "MeridianVault", role: "circuit breaker", type: "agent", x: cx, y: cy + 100, r: 30 }),
+      ammUS:     makeAgent({ id: "ammUS", name: "CR8/RWA AMM", role: "US pool", type: "pool", x: cx + 320, y: cy + 100 }),
+      owner:     makeAgent({ id: "owner", name: "owner", role: "page", type: "wallet", x: cx - 320, y: cy + 100 }),
+    };
+  },
+  steps: [
+    () => { /* idle */ },
+    (now) => {
+      addTx({ from: "chainlink", to: "adapter", color: "hot", label: "conf 6800 < 7500", dur: 1400 });
+      byId("chainlink").flash = 1;
+      setTimeout(() => { byId("adapter").flash = 1; byId("adapter").note = "STALE"; }, 1200);
+    },
+    (now) => {
+      addTx({ from: "adapter", to: "mm", color: "hot", label: "stale", dur: 1100, curve: -20 });
+      setTimeout(() => { byId("mm").note = "Δ = 3.4σ · halt"; byId("mm").flash = 1; }, 900);
+      setTimeout(() => addTx({ from: "mm", to: "vault", color: "hot", label: "setCircuitBreaker(true)", dur: 1300 }), 1300);
+    },
+    (now) => {
+      byId("vault").flash = 1;
+      byId("vault").note = "paused";
+      byId("vault").glow = 1;
+      addTx({ from: "vault", to: "ammUS", color: "hot", label: "pull quotes", dur: 1200 });
+      setTimeout(() => addTx({ from: "vault", to: "owner", color: "hot", label: "page · alert", dur: 1200, curve: 30 }), 350);
+      setTimeout(() => { byId("ammUS").note = "no quote"; byId("owner").flash = 1; }, 1500);
+    },
+  ],
+});
+
+// ─── Scene 8: "End-of-cycle report" ───────────────────────────────────
+SCENES.push({
+  name: "End-of-cycle report",
+  captions: [
+    "24-hour cycle closes. The agent assembles the treasury report from on-chain events: fills, inventory delta, yield earned, P&L per geography.",
+    "US lane: <code>+$1,142</code> on 47 fills. EM lane: <code>+$2,386</code> on 19 fills (wider spread, fewer hits). Idle yield (syUSD): <code>+$184</code>. LP NAV up <code>+0.37%</code>.",
+  ],
+  setup() {
+    geoLanes = null;
+    const cx = W / 2, cy = H / 2 - 20;
+    agents = {
+      mm:      makeAgent({ id: "mm", name: "MM agent", role: "settle cycle", type: "agent", x: cx - 280, y: cy }),
+      report:  makeAgent({ id: "report", name: "Treasury", role: "P&L by lane", type: "agent", x: cx, y: cy, r: 38 }),
+      lus:     makeAgent({ id: "lus", name: "US", role: "+$1,142 · 47 fills · 5 bps", type: "geo", x: cx + 280, y: cy - 150, color: "ok" }),
+      lem:     makeAgent({ id: "lem", name: "EM", role: "+$2,386 · 19 fills · 30 bps", type: "geo", x: cx + 320, y: cy, color: "signal" }),
+      lyield:  makeAgent({ id: "lyield", name: "Idle yield", role: "+$184 · syUSD", type: "lucidly", x: cx + 280, y: cy + 150 }),
+    };
+  },
+  steps: [
+    () => { /* idle */ },
+    (now) => {
+      byId("mm").flash = 1;
+      addTx({ from: "mm", to: "report", color: "accent", label: "snapshot", dur: 1400 });
+      setTimeout(() => {
+        byId("report").flash = 1;
+        byId("report").note = "NAV +0.37%";
+        byId("report").glow = 1;
+        addTx({ from: "report", to: "lus", color: "ok", label: "+$1,142", dur: 1300, curve: 30 });
+      }, 1200);
+      setTimeout(() => addTx({ from: "report", to: "lem", color: "signal", label: "+$2,386", dur: 1300 }), 1450);
+      setTimeout(() => addTx({ from: "report", to: "lyield", color: "ok", label: "+$184", dur: 1300, curve: -30 }), 1700);
+      setTimeout(() => {
+        byId("lus").glow = 0.8;
+        byId("lem").glow = 0.8;
+        byId("lyield").glow = 0.8;
+      }, 2600);
+    },
+  ],
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// Engine
+// ──────────────────────────────────────────────────────────────────────
+
+function loadScene(i) {
+  currentScene = ((i % SCENES.length) + SCENES.length) % SCENES.length;
+  currentStep = 0;
+  txs.length = 0;
+  txIdCounter = 0;
+  geoLanes = null;
+  SCENES[currentScene].setup();
+  // step 0 is the intro state (no animation) — run it
+  needsStepInit = true;
+  stepClock = 0;
+  updateChrome();
+}
+
+function runStep(idx) {
+  const scn = SCENES[currentScene];
+  if (idx < 0 || idx >= scn.steps.length) return;
+  // Decay glows on existing agents at each step so prior emphasis fades
+  for (const a of Object.values(agents)) {
+    a.flash = a.flash * 0.3;
+    a.glow = a.glow * 0.6;
+  }
+  scn.steps[idx](performance.now());
+}
+
+function advanceStep() {
+  const scn = SCENES[currentScene];
+  if (currentStep < scn.steps.length - 1) {
+    currentStep++;
+    runStep(currentStep);
+  } else {
+    // End of scene — loop to next scene
+    loadScene(currentScene + 1);
+  }
+  updateChrome();
+}
+
+function restartScene() {
+  loadScene(currentScene);
+}
+
+function gotoScene(i) {
+  loadScene(i);
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Tick & draw
+// ──────────────────────────────────────────────────────────────────────
+
+function tick(dt) {
+  // Initialize step 0 once at scene load
+  if (needsStepInit) {
+    runStep(0);
+    needsStepInit = false;
+  }
+
+  if (playing) {
+    stepClock += dt;
+    if (stepClock >= STEP_INTERVAL) {
+      stepClock = 0;
+      advanceStep();
+    }
+  }
+
+  // Decay flash & glow on agents
+  for (const a of Object.values(agents)) {
+    a.flash = Math.max(0, a.flash - dt * 0.0015);
+    a.glow = Math.max(0, a.glow * (1 - dt * 0.00025));
+    if (!a.hidden && a.appear < 1) a.appear = Math.min(1, a.appear + dt * 0.005);
+  }
+}
+
+function draw() {
+  const C = COLORS();
+
+  // Clear with slight ghost trail for movement
+  ctx.fillStyle = "rgba(5, 7, 9, 0.85)";
+  ctx.fillRect(0, 0, W, H);
+
+  // Geography lanes underlay (if any)
+  drawGeoLanes();
+
+  // Scene title (subtle, top-left)
+  ctx.save();
+  ctx.fillStyle = withAlpha(C.muted2, 0.6);
+  ctx.font = "11px " + cssVar("--mono");
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  ctx.fillText("// scene " + (currentScene + 1) + " of " + SCENES.length, 24, 18);
+  ctx.restore();
+
+  // Active transactions
+  const now = performance.now();
+  for (let i = txs.length - 1; i >= 0; i--) {
+    const alive = drawTx(txs[i], now);
+    if (!alive) txs.splice(i, 1);
+  }
+
+  // Agents on top
+  for (const a of Object.values(agents)) {
+    drawAgent(a);
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Chrome / DOM updates
+// ──────────────────────────────────────────────────────────────────────
+
+const sceneBar = document.getElementById("sceneBar");
+function buildSceneBar() {
+  sceneBar.innerHTML = "";
+  SCENES.forEach((scn, i) => {
+    const b = document.createElement("button");
+    b.innerHTML = `<span class="num">${(i + 1).toString().padStart(2, "0")}</span> ${scn.name}`;
+    b.onclick = () => gotoScene(i);
+    b.dataset.idx = i;
+    sceneBar.appendChild(b);
+  });
+  const ph = document.createElement("span");
+  ph.className = "placeholder";
+  ph.innerHTML = `+ add your scene <a href="https://github.com/kcolbchain/meridian/blob/main/lab/index.html" target="_blank">→</a>`;
+  sceneBar.appendChild(ph);
+}
+
+const sceneName = document.getElementById("sceneName");
+const sceneText = document.getElementById("sceneText");
+const stepLabel = document.getElementById("stepLabel");
+
+function updateChrome() {
+  // Scene-bar active state
+  Array.from(sceneBar.querySelectorAll("button")).forEach((b, i) => {
+    b.classList.toggle("active", i === currentScene);
+  });
+
+  const scn = SCENES[currentScene];
+  sceneName.textContent = scn.name;
+  const caption = scn.captions[currentStep] || scn.captions[scn.captions.length - 1] || "";
+  sceneText.innerHTML = caption;
+  stepLabel.innerHTML = `<span class="accent">scene ${currentScene + 1}/${SCENES.length}</span> · step ${currentStep + 1}/${scn.captions.length}`;
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Controls
+// ──────────────────────────────────────────────────────────────────────
+
+const btnPlay = document.getElementById("btnPlay");
+const btnStep = document.getElementById("btnStep");
+const btnRestart = document.getElementById("btnRestart");
+const btnPrev = document.getElementById("btnPrev");
+const btnNext = document.getElementById("btnNext");
+
+function setPlaying(p) {
+  playing = p;
+  btnPlay.textContent = playing ? "⏸" : "▶";
+  btnPlay.classList.toggle("active", playing);
+}
+
+btnPlay.onclick = () => setPlaying(!playing);
+btnStep.onclick = () => { advanceStep(); updateChrome(); };
+btnRestart.onclick = () => restartScene();
+btnPrev.onclick = () => gotoScene(currentScene - 1);
+btnNext.onclick = () => gotoScene(currentScene + 1);
+
+document.addEventListener("keydown", e => {
+  if (e.target.tagName === "INPUT") return;
+  if (e.code === "Space") { e.preventDefault(); setPlaying(!playing); }
+  else if (e.code === "KeyN") { advanceStep(); updateChrome(); }
+  else if (e.code === "KeyR") { restartScene(); }
+  else if (e.code === "ArrowLeft") { gotoScene(currentScene - 1); }
+  else if (e.code === "ArrowRight") { gotoScene(currentScene + 1); }
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// Tooltip on hover
+// ──────────────────────────────────────────────────────────────────────
+
+const tooltip = document.getElementById("tooltip");
+const ttName = document.getElementById("tooltipName");
+const ttRole = document.getElementById("tooltipRole");
+const ttBal = document.getElementById("tooltipBal");
+
+canvas.addEventListener("mousemove", e => {
+  const rect = canvas.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
+  let hit = null;
+  for (const a of Object.values(agents)) {
+    if (a.hidden || a.appear < 0.3) continue;
+    const dx = x - a.x, dy = y - a.y;
+    if (dx * dx + dy * dy <= (a.r + 6) * (a.r + 6)) { hit = a; break; }
+  }
+  if (hit) {
+    ttName.textContent = hit.name;
+    ttRole.textContent = hit.role;
+    if (hit.balance !== null && hit.balance !== undefined) {
+      ttBal.style.display = "block";
+      ttBal.innerHTML = `<span class="musd">$${formatMoney(hit.balance)} CR8-USD</span>`;
+    } else if (hit.shares !== null && hit.shares !== undefined) {
+      ttBal.style.display = "block";
+      ttBal.innerHTML = `<span class="shares">${hit.shares}</span>`;
+    } else {
+      ttBal.style.display = "none";
+    }
+    tooltip.style.left = e.clientX + "px";
+    tooltip.style.top = e.clientY + "px";
+    tooltip.classList.add("visible");
+  } else {
+    tooltip.classList.remove("visible");
+  }
+});
+canvas.addEventListener("mouseleave", () => tooltip.classList.remove("visible"));
+
+// ──────────────────────────────────────────────────────────────────────
+// Bootstrap
+// ──────────────────────────────────────────────────────────────────────
+
+buildSceneBar();
+resize();
+loadScene(0);
+
+let lastT = performance.now();
+function loop(t) {
+  const dt = t - lastT;
+  lastT = t;
+  tick(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+</script>
+</body>
+</html>
