@@ -33,6 +33,19 @@ CHAINLINK_ABI = [
         "stateMutability": "view",
         "type": "function",
     },
+    {
+        "inputs": [{"internalType": "uint80", "name": "_roundId", "type": "uint80"}],
+        "name": "getRoundData",
+        "outputs": [
+            {"internalType": "uint80", "name": "roundId", "type": "uint80"},
+            {"internalType": "int256", "name": "answer", "type": "int256"},
+            {"internalType": "uint256", "name": "startedAt", "type": "uint256"},
+            {"internalType": "uint256", "name": "updatedAt", "type": "uint256"},
+            {"internalType": "uint80", "name": "answeredInRound", "type": "uint80"},
+        ],
+        "stateMutability": "view",
+        "type": "function",
+    },
 ]
 
 
@@ -119,6 +132,42 @@ class ChainlinkOracle:
             except Exception as exc:
                 raise OracleError(f"Could not fetch decimals for {asset_pair}: {exc}") from exc
         return self._decimals[asset_pair]
+
+    def get_round_data(self, asset_pair: str, round_id: int) -> dict:
+        """Fetch a specific round's data from a Chainlink feed.
+
+        Args:
+            asset_pair: Asset pair (e.g. "ETH/USD").
+            round_id: Round ID to query.
+
+        Returns:
+            Dict with roundId, answer, startedAt, updatedAt, answeredInRound.
+
+        Raises:
+            OracleFeedNotFound: Asset pair not configured.
+            OracleError: Contract call failed.
+        """
+        asset_pair = asset_pair.upper()
+        try:
+            contract = self._get_contract(asset_pair)
+            decimals = self._get_decimals(asset_pair, contract)
+            round_data = contract.functions.getRoundData(round_id).call()
+            price_raw, updated_at = round_data[1], round_data[3]
+            if price_raw <= 0:
+                raise OracleError(f"Invalid price {price_raw} for {asset_pair} round {round_id}")
+            return {
+                "round_id": round_data[0],
+                "price": float(price_raw) / (10 ** decimals),
+                "started_at": round_data[2],
+                "updated_at": round_data[3],
+                "answered_in_round": round_data[4],
+            }
+        except (OracleConnectionError, OracleFeedNotFound, OracleStalePriceError, OracleError):
+            raise
+        except (ContractCustomError, ContractLogicError, TransactionNotFound) as exc:
+            raise OracleError(f"Contract call failed for {asset_pair} round {round_id}: {exc}") from exc
+        except Exception as exc:
+            raise OracleError(f"Unexpected error fetching {asset_pair} round {round_id}: {exc}") from exc
 
     def get_price(self, asset_pair: str) -> float:
         """Fetch the latest price for an asset pair.

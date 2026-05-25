@@ -12,6 +12,7 @@ from src.connectors.chainlink import (
     OracleFeedNotFound,
     OracleStalePriceError,
     OracleError,
+    CHAINLINK_ABI,
 )
 
 
@@ -118,7 +119,42 @@ class ChainlinkPriceFeed(BasePriceFeed):
             raise RuntimeError(f"Unexpected error fetching Chainlink price for asset '{asset}': {e}") from e
 
     def get_historical(self, asset: str, periods: int) -> list[PricePoint]:
-        # Implementing historical prices would require iterating through Chainlink rounds
-        # using contract.functions.getRoundData(roundId).call() which is not
-        # directly supported by the current ChainlinkOracle connector's API.
-        raise NotImplementedError("Historical Chainlink prices are not yet implemented.")
+        """Fetch historical prices from Chainlink's round-based storage.
+
+        Iterates backward from the latest round using getRoundData.
+        Returns up to `periods` points, may be fewer if few rounds exist.
+        """
+        points = []
+        try:
+            latest_price = self._chainlink_oracle.get_price(asset)
+            if latest_price is None:
+                return []
+            from web3 import Web3
+            w3 = self._chainlink_oracle.w3
+            address = self._chainlink_oracle.feed_addresses.get(asset.upper())
+            if not address:
+                return []
+            checksum = Web3.to_checksum_address(address)
+            contract = w3.eth.contract(address=checksum, abi=CHAINLINK_ABI)
+            latest_round = contract.functions.latestRoundData().call()
+            latest_round_id = latest_round[0]
+            for offset in range(periods):
+                rid = latest_round_id - offset
+                if rid <= 0:
+                    break
+                try:
+                    rd = self._chainlink_oracle.get_round_data(asset, rid)
+                    from datetime import datetime
+                    points.append(PricePoint(
+                        asset=asset,
+                        price=rd["price"],
+                        currency="USD",
+                        source="chainlink",
+                        timestamp=datetime.utcfromtimestamp(rd["updated_at"]),
+                        confidence=0.99,
+                    ))
+                except Exception:
+                    continue
+            return points
+        except Exception:
+            return []
