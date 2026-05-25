@@ -1,4 +1,5 @@
 # meridian
+[![repo](https://img.shields.io/badge/repo-meridian-blue)](https://github.com/kcolbchain/meridian)
 
 RWA market-making stack — ERC-4626 LP vaults, agent-driven quoting, oracle-adapted pricing, compliance-gated execution. By [kcolbchain](https://kcolbchain.com) (est. 2015).
 
