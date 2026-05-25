@@ -8,6 +8,8 @@ agent:
   max_base_position: 100
   geography: "default"
   liquid_volume_threshold: 1000000
+  settlement_asset: "USDC"
+  burn_toll_bps: 0.0
 
 backtest:
   fill_probability: 0.3
