@@ -9,7 +9,7 @@ git clone https://github.com/YOUR_USERNAME/meridian.git
 cd meridian
 pip install -r requirements.txt
 python -m pytest tests/
-python -m src.agents.rwa_market_maker --simulate
+python -m src.agents.rwa_market_maker --config config/default.yaml --simulate
 ```
 
 ### Contracts
