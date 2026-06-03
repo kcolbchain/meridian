@@ -85,21 +85,19 @@ class ChainlinkPriceFeed(BasePriceFeed):
             heartbeat_threshold_seconds=heartbeat_threshold_seconds,
         )
 
+    def _to_price_point(self, asset: str, round_data) -> PricePoint:
+        return PricePoint(
+            asset=asset,
+            price=round_data.price,
+            currency="USD",  # Chainlink feeds typically report in USD
+            source="chainlink",
+            timestamp=round_data.timestamp,
+            confidence=0.99,  # High confidence for Chainlink feeds
+        )
+
     def get_price(self, asset: str) -> Optional[PricePoint]:
         try:
-            price = self._chainlink_oracle.get_price(asset)
-            # ChainlinkOracle's get_price currently only returns the float price.
-            # We use datetime.utcnow() for the timestamp for now.
-            # For a more robust solution, ChainlinkOracle.get_price could return
-            # a tuple (price, updatedAt_timestamp) to provide the on-chain timestamp.
-            return PricePoint(
-                asset=asset,
-                price=price,
-                currency="USD",  # Chainlink feeds typically report in USD
-                source="chainlink",
-                timestamp=datetime.utcnow(),
-                confidence=0.99,  # High confidence for Chainlink feeds
-            )
+            return self._to_price_point(asset, self._chainlink_oracle.get_latest_round(asset))
         except OracleFeedNotFound:
             return None
         except OracleConnectionError as e:
@@ -118,7 +116,15 @@ class ChainlinkPriceFeed(BasePriceFeed):
             raise RuntimeError(f"Unexpected error fetching Chainlink price for asset '{asset}': {e}") from e
 
     def get_historical(self, asset: str, periods: int) -> list[PricePoint]:
-        # Implementing historical prices would require iterating through Chainlink rounds
-        # using contract.functions.getRoundData(roundId).call() which is not
-        # directly supported by the current ChainlinkOracle connector's API.
-        raise NotImplementedError("Historical Chainlink prices are not yet implemented.")
+        try:
+            return [
+                self._to_price_point(asset, round_data)
+                for round_data in self._chainlink_oracle.get_rounds(asset, periods)
+            ]
+        except OracleFeedNotFound:
+            return []
+        except OracleConnectionError as e:
+            print(f"Warning: Chainlink connection error for asset '{asset}': {e}")
+            return []
+        except OracleError as e:
+            raise RuntimeError(f"Chainlink oracle error for asset '{asset}': {e}") from e
