@@ -8,6 +8,6 @@
 <!-- Steps to verify the change -->
 
 ## Checklist
-- [ ] `cargo test` passes
-- [ ] `cargo clippy` passes
+- [ ] `pytest tests/` passes
+- [ ] `npx hardhat compile` succeeds (contracts)
 - [ ] Docs updated if API changed

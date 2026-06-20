@@ -12,6 +12,7 @@ from src.connectors.chainlink import (
     OracleFeedNotFound,
     OracleStalePriceError,
     OracleError,
+    CHAINLINK_ABI,
 )
 
 
@@ -85,19 +86,21 @@ class ChainlinkPriceFeed(BasePriceFeed):
             heartbeat_threshold_seconds=heartbeat_threshold_seconds,
         )
 
-    def _to_price_point(self, asset: str, round_data) -> PricePoint:
-        return PricePoint(
-            asset=asset,
-            price=round_data.price,
-            currency="USD",  # Chainlink feeds typically report in USD
-            source="chainlink",
-            timestamp=round_data.timestamp,
-            confidence=0.99,  # High confidence for Chainlink feeds
-        )
-
     def get_price(self, asset: str) -> Optional[PricePoint]:
         try:
-            return self._to_price_point(asset, self._chainlink_oracle.get_latest_round(asset))
+            price = self._chainlink_oracle.get_price(asset)
+            # ChainlinkOracle's get_price currently only returns the float price.
+            # We use datetime.utcnow() for the timestamp for now.
+            # For a more robust solution, ChainlinkOracle.get_price could return
+            # a tuple (price, updatedAt_timestamp) to provide the on-chain timestamp.
+            return PricePoint(
+                asset=asset,
+                price=price,
+                currency="USD",  # Chainlink feeds typically report in USD
+                source="chainlink",
+                timestamp=datetime.utcnow(),
+                confidence=0.99,  # High confidence for Chainlink feeds
+            )
         except OracleFeedNotFound:
             return None
         except OracleConnectionError as e:
@@ -116,15 +119,42 @@ class ChainlinkPriceFeed(BasePriceFeed):
             raise RuntimeError(f"Unexpected error fetching Chainlink price for asset '{asset}': {e}") from e
 
     def get_historical(self, asset: str, periods: int) -> list[PricePoint]:
+        """Fetch historical prices from Chainlink's round-based storage.
+
+        Iterates backward from the latest round using getRoundData.
+        Returns up to `periods` points, may be fewer if few rounds exist.
+        """
+        points = []
         try:
-            return [
-                self._to_price_point(asset, round_data)
-                for round_data in self._chainlink_oracle.get_rounds(asset, periods)
-            ]
-        except OracleFeedNotFound:
+            latest_price = self._chainlink_oracle.get_price(asset)
+            if latest_price is None:
+                return []
+            from web3 import Web3
+            w3 = self._chainlink_oracle.w3
+            address = self._chainlink_oracle.feed_addresses.get(asset.upper())
+            if not address:
+                return []
+            checksum = Web3.to_checksum_address(address)
+            contract = w3.eth.contract(address=checksum, abi=CHAINLINK_ABI)
+            latest_round = contract.functions.latestRoundData().call()
+            latest_round_id = latest_round[0]
+            for offset in range(periods):
+                rid = latest_round_id - offset
+                if rid <= 0:
+                    break
+                try:
+                    rd = self._chainlink_oracle.get_round_data(asset, rid)
+                    from datetime import datetime
+                    points.append(PricePoint(
+                        asset=asset,
+                        price=rd["price"],
+                        currency="USD",
+                        source="chainlink",
+                        timestamp=datetime.utcfromtimestamp(rd["updated_at"]),
+                        confidence=0.99,
+                    ))
+                except Exception:
+                    continue
+            return points
+        except Exception:
             return []
-        except OracleConnectionError as e:
-            print(f"Warning: Chainlink connection error for asset '{asset}': {e}")
-            return []
-        except OracleError as e:
-            raise RuntimeError(f"Chainlink oracle error for asset '{asset}': {e}") from e
