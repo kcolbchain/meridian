@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from ..agents.base_agent import BaseAgent, Fill, Side
+from .metrics import max_drawdown, sharpe_ratio
 
 logger = logging.getLogger(__name__)
 
@@ -40,8 +41,6 @@ class BacktestEngine:
     def run(self, data: list[BacktestTick]) -> BacktestResult:
         """Run backtest over historical data."""
         pnl_curve = []
-        peak_pnl = 0.0
-        max_drawdown = 0.0
         total_fills = 0
 
         for tick in data:
@@ -67,19 +66,13 @@ class BacktestEngine:
                     total_fills += 1
 
             pnl = self.agent.get_pnl(tick.oracle_price)
-            total = pnl["total"]
-            pnl_curve.append(total)
-            peak_pnl = max(peak_pnl, total)
-            drawdown = peak_pnl - total
-            max_drawdown = max(max_drawdown, drawdown)
+            pnl_curve.append(pnl["total"])
 
-        # Compute Sharpe ratio
-        if len(pnl_curve) > 1:
-            import numpy as np
-            returns = np.diff(pnl_curve)
-            sharpe = float(np.mean(returns) / np.std(returns)) if np.std(returns) > 0 else 0.0
-        else:
-            sharpe = 0.0
+        # Compute summary metrics from the shared metrics module.
+        import numpy as np
+        returns = np.diff(pnl_curve) if len(pnl_curve) > 1 else []
+        sharpe = sharpe_ratio(returns)
+        drawdown = max_drawdown(pnl_curve)
 
         final_pnl = self.agent.get_pnl(data[-1].oracle_price) if data else {"realized": 0, "unrealized": 0, "total": 0}
 
@@ -89,7 +82,7 @@ class BacktestEngine:
             realized_pnl=final_pnl["realized"],
             unrealized_pnl=final_pnl["unrealized"],
             total_pnl=final_pnl["total"],
-            max_drawdown=max_drawdown,
+            max_drawdown=drawdown,
             sharpe_ratio=sharpe,
             final_position=self.agent.position.base_balance,
             fill_rate=total_fills / len(data) if data else 0,
